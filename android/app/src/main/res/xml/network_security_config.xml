@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The homelab server is reached over plain http at whatever LAN address the
+     user configures, so cleartext must be allowed generally: Android matches
+     these entries by hostname suffix, not by CIDR range, so listing private
+     ranges here would not actually match 192.168.1.10.
+
+     This is acceptable because the app only ever talks to the one server the
+     user enters in Settings, and that server is explicitly not to be exposed
+     to the public internet. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Waveform mark: the app is about listening. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#FFFFFF" android:pathData="M32,46h5v16h-5z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M42,38h5v32h-5z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M52,30h5v48h-5z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M62,38h5v32h-5z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M72,46h5v16h-5z" />
+</vector>
