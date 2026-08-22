@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -87,6 +88,11 @@ func discoverSR(ctx context.Context, pool *pgxpool.Pool, s Source) (int, error) 
 	var cfg struct {
 		ProgramID   int    `json:"program_id"`
 		ProgramName string `json:"program_name"`
+		// SR re-publishes the same Klartext episode for each airing (19:00
+		// and 21:00), with a different episode id and audio URL but identical
+		// content. The spec's (source_id, external_id) key cannot catch that,
+		// so programmes known to air once per day opt into a date-based check.
+		OnePerDay bool `json:"one_per_day"`
 	}
 	if err := json.Unmarshal(s.Config, &cfg); err != nil {
 		return 0, err
@@ -121,6 +127,19 @@ func discoverSR(ctx context.Context, pool *pgxpool.Pool, s Source) (int, error) 
 		if audio.Duration > 0 {
 			durMS = audio.Duration * 1000
 		}
+
+		if cfg.OnePerDay && pub != nil {
+			dupe, err := hasItemOnDate(ctx, pool, s.ID, e.PublishDateUTC.Time)
+			if err != nil {
+				return n, err
+			}
+			if dupe {
+				log.Printf("discover %s: episode %d duplicates an existing episode for %s, skipping",
+					s.Slug, e.ID, e.PublishDateUTC.Format("2006-01-02"))
+				continue
+			}
+		}
+
 		inserted, err := insertItem(ctx, pool, s.ID, fmt.Sprint(e.ID),
 			e.Title, e.Description, pub, audio.URL, durMS)
 		if err != nil {
@@ -131,6 +150,18 @@ func discoverSR(ctx context.Context, pool *pgxpool.Pool, s Source) (int, error) 
 		}
 	}
 	return n, nil
+}
+
+// hasItemOnDate reports whether the source already has an item published on
+// the same UTC date. Used only by sources flagged one_per_day.
+func hasItemOnDate(ctx context.Context, pool *pgxpool.Pool, sourceID int, published time.Time) (bool, error) {
+	var exists bool
+	err := pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM items
+			WHERE source_id = $1 AND published_at::date = $2::date)`,
+		sourceID, published).Scan(&exists)
+	return exists, err
 }
 
 // insertItem inserts one item, returning whether it was actually new.

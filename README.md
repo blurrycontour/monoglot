@@ -75,6 +75,12 @@ new → downloading → downloaded → transcribing → ready
                        failed ←───────┘
 ```
 
+Sveriges Radio publishes the same Klartext episode once per airing (19:00 and
+21:00), each with its own episode id and audio URL but identical content, so
+deduping on `(source_id, external_id)` alone lets a second copy of every
+episode through. Sources that air once per day set `"one_per_day": true` in
+their config and are additionally deduped by publish date.
+
 Transcripts are generated **from the audio**, never from the publisher's
 manuscript. Klartext publishes a script, but it is not word-aligned and does not
 match the read audio exactly. Generating from audio makes alignment correct by
@@ -93,6 +99,9 @@ work on a bus with no signal.
 - Lemma resolution: **92.5%** of word tokens
 - Offline definition coverage: **90.1%** of word tokens per episode
 - SALDO: 1.67M inflected forms; Folkets: 36,876 lexemes
+
+Note: transcription and the Android build are both disk-hungry. Keep several GB
+free; `docker builder prune -af` reclaims the most.
 
 ## Deliberately not built
 
