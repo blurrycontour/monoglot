@@ -23,7 +23,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -44,18 +46,24 @@ fun MiniPlayer(
 ) {
     val progress by animateFloatAsState(now.progress, tween(220), label = "miniProgress")
 
+    // Deliberately more present than the surrounding chrome: it is a live
+    // control, and at surfaceVariant it read as part of the navigation bar.
     Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        tonalElevation = 3.dp,
-        shadowElevation = 10.dp,
-        shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp)
+            .shadow(14.dp, RoundedCornerShape(16.dp), clip = false),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        tonalElevation = 6.dp,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
     ) {
         Column {
             LinearProgressIndicator(
                 progress = { progress },
-                modifier = Modifier.fillMaxWidth().height(2.dp),
-                trackColor = MaterialTheme.colorScheme.outlineVariant,
+                modifier = Modifier.fillMaxWidth().height(3.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
                 drawStopIndicator = {},
             )
             Row(
@@ -66,24 +74,20 @@ fun MiniPlayer(
             ) {
                 Box(
                     Modifier
-                        .size(38.dp)
-                        .clip(RoundedCornerShape(9.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(MaterialTheme.colorScheme.primary),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        Icons.Default.GraphicEq,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
+                    AppMark(Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onPrimary)
                 }
                 Spacer(Modifier.width(11.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         now.title.ifBlank { "Now playing" },
                         style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -91,7 +95,7 @@ fun MiniPlayer(
                         "${formatDuration(now.positionMs)} / ${formatDuration(now.durationMs)}" +
                             if (now.speed != 1.0f) "  ·  ${trimSpeed(now.speed)}×" else "",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
                         maxLines = 1,
                     )
                 }

@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Svenska"
+rootProject.name = "Monoglot"
 include(":app")

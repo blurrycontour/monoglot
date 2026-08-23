@@ -22,7 +22,7 @@ class InstallReceiver : BroadcastReceiver() {
             }
             PackageInstaller.STATUS_SUCCESS -> {
                 // The process is usually replaced before this is seen.
-                Toast.makeText(context, "Svenska updated", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Monoglot updated", Toast.LENGTH_SHORT).show()
             }
             else -> {
                 val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)

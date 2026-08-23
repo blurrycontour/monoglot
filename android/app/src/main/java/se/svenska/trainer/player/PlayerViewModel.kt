@@ -72,6 +72,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 PlaybackHolder.connect(getApplication()) {
                     viewModelScope.launch {
                         PlaybackHolder.prepare(
+                            context = getApplication(),
                             itemId = itemId,
                             uri = repo.mediaUri(itemId),
                             title = bundle.item.title,
@@ -226,7 +227,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun tokenIndex(): TokenIndex? = index
 
+    /** Flushes the exact position so the library is correct the moment the
+     *  player is popped, rather than up to five seconds stale. */
+    fun flushProgress() {
+        val pos = PlaybackHolder.position()
+        val dur = _state.value.durationMs
+        if (itemId <= 0 || pos <= 0) return
+        viewModelScope.launch {
+            repo.saveProgress(itemId, pos, completed = dur > 0 && pos > dur - 5000)
+        }
+    }
+
     override fun onCleared() {
+        flushProgress()
         // Only stop driving highlight updates. Playback itself keeps running:
         // the holder owns the controller so the mini player survives this
         // screen being popped.

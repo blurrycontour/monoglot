@@ -212,6 +212,23 @@ func (s *Server) getAudio(w http.ResponseWriter, r *http.Request) {
 	_ = f
 }
 
+// resetProgress clears playback position for one item, so it reads as unheard
+// again. Listen count is kept: it records history, not position.
+func (s *Server) resetProgress(w http.ResponseWriter, r *http.Request) {
+	id, err := intParam(r, "id")
+	if err != nil {
+		badRequest(w, "bad item id")
+		return
+	}
+	if _, err := s.pool.Exec(r.Context(), `
+		UPDATE progress SET position_ms = 0, completed = false, updated_at = now()
+		WHERE item_id = $1`, id); err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "position_ms": 0})
+}
+
 func (s *Server) postProgress(w http.ResponseWriter, r *http.Request) {
 	id, err := intParam(r, "id")
 	if err != nil {

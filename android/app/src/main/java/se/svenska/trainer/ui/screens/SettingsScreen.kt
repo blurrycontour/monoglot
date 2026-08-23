@@ -365,7 +365,7 @@ private fun AboutSection() {
         }
         Spacer(Modifier.width(12.dp))
         Column {
-            Text("Svenska", fontWeight = FontWeight.SemiBold,
+            Text("Monoglot", fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.titleMedium)
             Text(
                 "Listening trainer",

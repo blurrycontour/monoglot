@@ -112,6 +112,67 @@ func (s *Server) postWordStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"lemma": lemma, "status": body.Status})
 }
 
+// deleteWords removes vocabulary entries entirely. Marking a word known or
+// learning is a judgement about the word; deleting is for words that should
+// never have been recorded, usually an accidental tap.
+func (s *Server) deleteWords(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Lemmas []string `json:"lemmas"`
+		All    bool     `json:"all"`
+		Status string   `json:"status"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		badRequest(w, err.Error())
+		return
+	}
+	lang := langOr(r)
+
+	var tag any
+	var err error
+	var deleted int64
+
+	switch {
+	case len(body.Lemmas) > 0:
+		tag, err = s.pool.Exec(r.Context(),
+			`DELETE FROM user_words WHERE language_code = $1 AND lemma = ANY($2)`,
+			lang, body.Lemmas)
+	case body.All && body.Status != "":
+		tag, err = s.pool.Exec(r.Context(),
+			`DELETE FROM user_words WHERE language_code = $1 AND status = $2`,
+			lang, body.Status)
+	case body.All:
+		tag, err = s.pool.Exec(r.Context(),
+			`DELETE FROM user_words WHERE language_code = $1`, lang)
+	default:
+		badRequest(w, "provide lemmas, or all with an optional status")
+		return
+	}
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if ct, ok := tag.(interface{ RowsAffected() int64 }); ok {
+		deleted = ct.RowsAffected()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
+}
+
+// deleteWord removes a single lemma.
+func (s *Server) deleteWord(w http.ResponseWriter, r *http.Request) {
+	lemma := strings.TrimSpace(chi.URLParam(r, "lemma"))
+	if lemma == "" {
+		badRequest(w, "missing lemma")
+		return
+	}
+	if _, err := s.pool.Exec(r.Context(),
+		`DELETE FROM user_words WHERE language_code = $1 AND lemma = $2`,
+		langOr(r), lemma); err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"deleted": lemma})
+}
+
 type WordRow struct {
 	Lemma       string               `json:"lemma"`
 	Status      string               `json:"status"`
@@ -180,7 +241,7 @@ func (s *Server) exportAnki(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition",
-		fmt.Sprintf(`attachment; filename="svenska-%s-%s.csv"`,
+		fmt.Sprintf(`attachment; filename="monoglot-%s-%s.csv"`,
 			status, time.Now().Format("2006-01-02")))
 
 	cw := csv.NewWriter(w)

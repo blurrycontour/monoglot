@@ -1,6 +1,6 @@
-# Svenska Listening Trainer
+# Monoglot
 
-A personal Swedish listening-comprehension tool. Audio is primary; the
+A personal listening-comprehension trainer. Swedish today, built to take more languages. Audio is primary; the
 transcript is a crutch you reveal on demand, one sentence at a time.
 
 Built to the spec in [SPEC.md](SPEC.md).

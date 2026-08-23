@@ -77,21 +77,44 @@ run_in_container gradle --no-daemon "$TASK" \
   -PappVersionCode="$VERSION_CODE" \
   -PappVersionName="$VERSION_NAME" "$@"
 
-# Publish a release build so the server's /download page can serve it.
+# Publish only when this invocation actually produced a release APK. A stale
+# APK from an earlier build must never be republished under a fresh version
+# number: the app would then be told to update to a build that does not exist,
+# and would keep asking forever after installing the real one.
 APK="$ROOT/android/app/build/outputs/apk/release/app-release.apk"
-if [ -f "$APK" ]; then
+case "$TASK" in
+  assembleRelease|bundleRelease|build|assemble) PUBLISH=1 ;;
+  *) PUBLISH=0 ;;
+esac
+
+if [ "$PUBLISH" = "1" ] && [ -f "$APK" ]; then
   mkdir -p "$APK_DIR"
-  cp "$APK" "$APK_DIR/svenska.apk"
-  echo "$VERSION_NAME (build $VERSION_CODE)" > "$APK_DIR/version.txt"
-  # Machine-readable manifest for the app's own update check.
+  cp "$APK" "$APK_DIR/monoglot.apk"
+
+  # Read the version back out of the built APK rather than trusting the shell
+  # variable. These must agree exactly or the update check never converges.
+  # No `| head` here: under `set -o pipefail` the early close sends SIGPIPE to
+  # aapt2 and aborts the script even though the read succeeded.
+  BADGING=$(docker run --rm -v "$APK_DIR:/apk" "$IMAGE" \
+    /opt/android-sdk/build-tools/35.0.0/aapt2 dump badging /apk/monoglot.apk 2>/dev/null || true)
+  PACKAGE_LINE=${BADGING%%$'\n'*}
+  APK_CODE=$(printf '%s' "$PACKAGE_LINE" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
+  APK_NAME=$(printf '%s' "$PACKAGE_LINE" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+
+  if [ -z "$APK_CODE" ]; then
+    echo "!! could not read versionCode from the APK; not publishing a manifest" >&2
+    exit 1
+  fi
+
+  echo "$APK_NAME (build $APK_CODE)" > "$APK_DIR/version.txt"
   cat > "$APK_DIR/version.json" <<JSON
 {
-  "version_code": $VERSION_CODE,
-  "version_name": "$VERSION_NAME",
-  "size_bytes": $(stat -c%s "$APK"),
+  "version_code": $APK_CODE,
+  "version_name": "$APK_NAME",
+  "size_bytes": $(stat -c%s "$APK_DIR/monoglot.apk"),
   "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 JSON
-  echo "==> Published to $APK_DIR/svenska.apk"
+  echo "==> Published build $APK_CODE to $APK_DIR/monoglot.apk"
   echo "    Install from a phone browser: http://<server-ip>:${API_PORT:-8080}/download"
 fi

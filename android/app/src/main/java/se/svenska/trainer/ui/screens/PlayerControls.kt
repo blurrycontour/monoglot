@@ -1,6 +1,10 @@
 package se.svenska.trainer.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -9,6 +13,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -21,101 +26,217 @@ import se.svenska.trainer.player.PlayerViewModel
 // 1.0 is a 15% change, right at the threshold of perception for speech.
 private val SPEEDS = listOf(0.5f, 0.6f, 0.75f, 0.85f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
 
+/**
+ * Transport. Replay-sentence is the most-used control after play, so it holds
+ * the centre of its row; speed and transcript visibility flank it as compact
+ * affordances that open a sheet rather than occupying permanent rows.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun Controls(vm: PlayerViewModel, state: PlayerState) {
-    Surface(
-        tonalElevation = 3.dp,
-        shadowElevation = 8.dp,
-    ) {
+    var speedSheet by remember { mutableStateOf(false) }
+    var textSheet by remember { mutableStateOf(false) }
+
+    Surface(tonalElevation = 3.dp, shadowElevation = 8.dp) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 14.dp),
+                .padding(horizontal = 18.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Scrubber(state) { vm.seekTo(it) }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
 
-            // Replay-sentence is the most-used control after play, so it gets
-            // a full-width target of its own rather than competing for space
-            // in the transport row.
-            FilledTonalButton(
-                onClick = { vm.replaySegment() },
-                modifier = Modifier.fillMaxWidth().height(54.dp),
-                colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                ),
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(22.dp))
-                Spacer(Modifier.width(10.dp))
-                Text("Replay sentence", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                PillButton(
+                    label = "${trimSpeed(state.speed)}×",
+                    icon = Icons.Default.Speed,
+                    contentDescription = "Playback speed",
+                    onClick = { speedSheet = true },
+                )
+
+                FilledTonalButton(
+                    onClick = { vm.replaySegment() },
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    ),
+                ) {
+                    Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(19.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text("Replay", fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                }
+
+                PillButton(
+                    label = state.transcriptMode.shortLabel(),
+                    icon = state.transcriptMode.icon(),
+                    contentDescription = "Transcript visibility",
+                    onClick = { textSheet = true },
+                    highlighted = state.transcriptMode != TranscriptMode.HIDDEN,
+                )
             }
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(6.dp))
 
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = { vm.previousSegment() }, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.SkipPrevious, "Previous sentence", Modifier.size(28.dp))
+                IconButton(onClick = { vm.previousSegment() }, modifier = Modifier.size(46.dp)) {
+                    Icon(Icons.Default.SkipPrevious, "Previous sentence", Modifier.size(26.dp))
                 }
-                IconButton(onClick = { vm.skip(-5000) }, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.Replay5, "Back 5 seconds", Modifier.size(28.dp))
+                IconButton(onClick = { vm.skip(-5000) }, modifier = Modifier.size(46.dp)) {
+                    Icon(Icons.Default.Replay5, "Back 5 seconds", Modifier.size(26.dp))
                 }
-
                 FilledIconButton(
                     onClick = { vm.playPause() },
-                    modifier = Modifier.size(68.dp),
+                    modifier = Modifier.size(64.dp),
                 ) {
                     Icon(
                         if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = if (state.isPlaying) "Pause" else "Play",
-                        modifier = Modifier.size(36.dp),
+                        modifier = Modifier.size(34.dp),
                     )
                 }
-
-                IconButton(onClick = { vm.skip(5000) }, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.Forward5, "Forward 5 seconds", Modifier.size(28.dp))
+                IconButton(onClick = { vm.skip(5000) }, modifier = Modifier.size(46.dp)) {
+                    Icon(Icons.Default.Forward5, "Forward 5 seconds", Modifier.size(26.dp))
                 }
-                IconButton(onClick = { vm.nextSegment() }, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.SkipNext, "Next sentence", Modifier.size(28.dp))
+                IconButton(onClick = { vm.nextSegment() }, modifier = Modifier.size(46.dp)) {
+                    Icon(Icons.Default.SkipNext, "Next sentence", Modifier.size(26.dp))
                 }
             }
+        }
+    }
 
-            Spacer(Modifier.height(10.dp))
-            TranscriptModeRow(state.transcriptMode) { vm.setTranscriptMode(it) }
-            Spacer(Modifier.height(8.dp))
-            SpeedSelector(state.speed) { vm.setSpeed(it) }
+    if (speedSheet) {
+        SpeedSheet(state.speed, onSelect = { vm.setSpeed(it) }, onDismiss = { speedSheet = false })
+    }
+    if (textSheet) {
+        TranscriptSheet(
+            state.transcriptMode,
+            onSelect = { vm.setTranscriptMode(it); textSheet = false },
+            onDismiss = { textSheet = false },
+        )
+    }
+}
+
+private fun TranscriptMode.shortLabel() = when (this) {
+    TranscriptMode.HIDDEN -> "Off"
+    TranscriptMode.REVEAL -> "Line"
+    TranscriptMode.FULL -> "All"
+}
+
+private fun TranscriptMode.icon() = when (this) {
+    TranscriptMode.HIDDEN -> Icons.Default.VisibilityOff
+    TranscriptMode.REVEAL -> Icons.Default.Visibility
+    TranscriptMode.FULL -> Icons.Default.Article
+}
+
+@Composable
+private fun PillButton(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    highlighted: Boolean = false,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(22.dp),
+        color = if (highlighted) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.height(48.dp).widthIn(min = 62.dp),
+    ) {
+        Column(
+            Modifier.padding(horizontal = 10.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(
+                icon,
+                contentDescription = contentDescription,
+                modifier = Modifier.size(16.dp),
+                tint = if (highlighted) MaterialTheme.colorScheme.onPrimaryContainer
+                       else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                label,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                color = if (highlighted) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
 
-/**
- * Transcript visibility, in the transport bar rather than buried in the app
- * bar: switching between listening blind and reading along is a thing you do
- * constantly while playing, not a settings decision.
- */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun TranscriptModeRow(current: TranscriptMode, onSelect: (TranscriptMode) -> Unit) {
+private fun SpeedSheet(current: Float, onSelect: (Float) -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(horizontal = 22.dp).padding(bottom = 30.dp)) {
+            Text("Playback speed", style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Slower speeds are the point: fluent Swedish is hard to parse at full pace.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(16.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SPEEDS.forEach { speed ->
+                    FilterChip(
+                        selected = kotlin.math.abs(current - speed) < 0.01f,
+                        onClick = { onSelect(speed) },
+                        label = { Text("${trimSpeed(speed)}×") },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TranscriptSheet(
+    current: TranscriptMode,
+    onSelect: (TranscriptMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val options = listOf(
-        Triple(TranscriptMode.HIDDEN, Icons.Default.VisibilityOff, "Hidden"),
-        Triple(TranscriptMode.REVEAL, Icons.Default.Visibility, "Reveal"),
-        Triple(TranscriptMode.FULL, Icons.Default.Article, "Full"),
+        Triple(TranscriptMode.HIDDEN, "Hidden", "No text. Listen first."),
+        Triple(TranscriptMode.REVEAL, "Reveal one line", "Show only the sentence playing, on request."),
+        Triple(TranscriptMode.FULL, "Full transcript", "Everything, with the spoken word highlighted."),
     )
-    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-        options.forEachIndexed { i, (mode, icon, label) ->
-            SegmentedButton(
-                selected = current == mode,
-                onClick = { onSelect(mode) },
-                shape = SegmentedButtonDefaults.itemShape(i, options.size),
-                icon = {},
-            ) {
-                Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(label, fontSize = 13.sp)
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(bottom = 30.dp)) {
+            Text(
+                "Transcript",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 22.dp, bottom = 8.dp),
+            )
+            options.forEach { (mode, title, subtitle) ->
+                ListItem(
+                    headlineContent = { Text(title) },
+                    supportingContent = {
+                        Text(subtitle, style = MaterialTheme.typography.bodySmall)
+                    },
+                    leadingContent = {
+                        RadioButton(selected = current == mode, onClick = { onSelect(mode) })
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    modifier = Modifier.clickable { onSelect(mode) },
+                )
             }
         }
     }
@@ -146,48 +267,6 @@ private fun Scrubber(state: PlayerState, onSeek: (Int) -> Unit) {
     }
 }
 
-/**
- * Nine speeds do not fit across a phone, so this scrolls and auto-centres the
- * active one. Kept as discrete chips rather than a slider: you want to return
- * to exactly 0.75x, not approximately.
- */
-@Composable
-private fun SpeedSelector(current: Float, onSelect: (Float) -> Unit) {
-    val listState = rememberLazyListState()
-    val currentIndex = SPEEDS.indexOfFirst { kotlin.math.abs(current - it) < 0.01f }
-
-    LaunchedEffect(currentIndex) {
-        if (currentIndex >= 0) {
-            listState.animateScrollToItem(currentIndex.coerceAtLeast(0), scrollOffset = -160)
-        }
-    }
-
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(
-            Icons.Default.Speed,
-            contentDescription = "Playback speed",
-            modifier = Modifier.size(17.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.width(8.dp))
-        LazyRow(
-            state = listState,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            contentPadding = PaddingValues(end = 8.dp),
-        ) {
-            items(SPEEDS.size) { i ->
-                val speed = SPEEDS[i]
-                val selected = kotlin.math.abs(current - speed) < 0.01f
-                FilterChip(
-                    selected = selected,
-                    onClick = { onSelect(speed) },
-                    label = { Text("${trimSpeed(speed)}×", fontSize = 13.sp) },
-                    modifier = Modifier.height(32.dp),
-                )
-            }
-        }
-    }
-}
 
 fun formatTime(ms: Int): String {
     val total = ms / 1000

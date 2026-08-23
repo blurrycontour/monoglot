@@ -2,6 +2,7 @@ package se.svenska.trainer.player
 
 import android.content.ComponentName
 import android.content.Context
+import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
@@ -17,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** What is loaded right now, for anything that wants to show playback state. */
@@ -60,6 +62,7 @@ object PlaybackHolder {
     fun connect(context: Context, onReady: (MediaController) -> Unit = {}) {
         controller?.let { onReady(it); return }
 
+        appContext = context.applicationContext
         val token = SessionToken(
             context.applicationContext,
             ComponentName(context.applicationContext, PlaybackService::class.java),
@@ -120,7 +123,13 @@ object PlaybackHolder {
         onPositionChanged = block
     }
 
+    private var appContext: Context? = null
+
+    private fun artworkUri(context: Context): Uri =
+        Uri.parse("android.resource://${context.packageName}/drawable/media_art")
+
     fun prepare(
+        context: Context,
         itemId: Int,
         uri: String,
         title: String,
@@ -136,7 +145,12 @@ object PlaybackHolder {
                     .setMediaId(itemId.toString())
                     .setUri(uri)
                     .setMediaMetadata(
-                        MediaMetadata.Builder().setTitle(title).setArtist(source).build()
+                        MediaMetadata.Builder()
+                            .setTitle(title)
+                            .setArtist(source)
+                            // Shown on the lock screen and in the notification.
+                            .setArtworkUri(artworkUri(context))
+                            .build()
                     )
                     .build()
             )
@@ -148,6 +162,9 @@ object PlaybackHolder {
             itemId = itemId, title = title, source = source,
             durationMs = durationMs, speed = speed, isPlaying = c.isPlaying,
         )
+        scope.launch {
+            se.svenska.trainer.data.Graph.repository.settings.setLastItem(itemId)
+        }
     }
 
     fun playPause() {
@@ -179,4 +196,35 @@ object PlaybackHolder {
     }
 
     fun position(): Int = controller?.currentPosition?.toInt() ?: 0
+
+    /**
+     * Reinstates the last played item, paused and seeked to where it was left,
+     * when the process starts with no active media. Without this the mini
+     * player is missing after every cold start, even though the app knows
+     * exactly what you were listening to.
+     */
+    fun restoreLastIfIdle(context: Context) {
+        scope.launch {
+            val repo = se.svenska.trainer.data.Graph.repository
+            val itemId = repo.settings.lastItemFlow.first()
+            if (itemId <= 0) return@launch
+
+            connect(context) {
+                if (_now.value.active) return@connect
+                scope.launch {
+                    val bundle = runCatching { repo.bundle(itemId) }.getOrNull() ?: return@launch
+                    prepare(
+                        context = context,
+                        itemId = itemId,
+                        uri = repo.mediaUri(itemId),
+                        title = bundle.item.title,
+                        source = bundle.item.sourceName,
+                        durationMs = bundle.item.durationMs,
+                        resumeMs = maxOf(repo.localProgress(itemId), bundle.item.positionMs),
+                        speed = repo.settings.speedFlow.first(),
+                    )
+                }
+            }
+        }
+    }
 }

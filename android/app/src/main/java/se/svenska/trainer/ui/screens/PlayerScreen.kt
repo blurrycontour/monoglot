@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +41,9 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
     val state by vm.state.collectAsState()
 
     LaunchedEffect(itemId) { vm.load(itemId) }
+
+    // Write the current position back before the library reappears.
+    DisposableEffect(Unit) { onDispose { vm.flushProgress() } }
 
     Scaffold(
         topBar = {

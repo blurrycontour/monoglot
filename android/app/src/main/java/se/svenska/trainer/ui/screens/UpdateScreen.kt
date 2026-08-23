@@ -178,7 +178,7 @@ fun UpdateSection() {
         if (!updater.canInstall()) {
             Spacer(Modifier.height(8.dp))
             Text(
-                "Android needs permission to install apps from Svenska before an " +
+                "Android needs permission to install apps from Monoglot before an " +
                     "update can be applied.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

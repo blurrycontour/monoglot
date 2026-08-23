@@ -23,7 +23,7 @@ type AppVersion struct {
 // checks it before the user has necessarily configured a token, and it leaks
 // nothing beyond a build number.
 func (s *Server) appVersion(w http.ResponseWriter, r *http.Request) {
-	out := AppVersion{DownloadURL: "/download/svenska.apk"}
+	out := AppVersion{DownloadURL: "/download/monoglot.apk"}
 
 	manifest := filepath.Join(filepath.Dir(s.cfg.APKPath), "version.json")
 	if b, err := os.ReadFile(manifest); err == nil {
@@ -37,6 +37,6 @@ func (s *Server) appVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	// Re-assert after unmarshal, which would otherwise overwrite it with the
 	// manifest's (absent) value.
-	out.DownloadURL = "/download/svenska.apk"
+	out.DownloadURL = "/download/monoglot.apk"
 	writeJSON(w, http.StatusOK, out)
 }

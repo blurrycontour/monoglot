@@ -41,7 +41,7 @@ func (s *Server) Routes() http.Handler {
 	// hold a token, so this cannot sit behind auth. Serves only the APK.
 	r.Get("/", s.downloadPage)
 	r.Get("/download", s.downloadPage)
-	r.Get("/download/svenska.apk", s.downloadAPK)
+	r.Get("/download/monoglot.apk", s.downloadAPK)
 	r.Get("/api/app/version", s.appVersion)
 
 	r.Group(func(r chi.Router) {
@@ -56,6 +56,9 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/api/lookup", s.lookup)
 		r.Post("/api/words/{lemma}/status", s.postWordStatus)
 		r.Get("/api/words", s.listWords)
+		r.Post("/api/words/delete", s.deleteWords)
+		r.Delete("/api/words/{lemma}", s.deleteWord)
+		r.Post("/api/items/{id}/progress/reset", s.resetProgress)
 		r.Get("/api/export/anki", s.exportAnki)
 
 		r.Get("/api/status", s.pipelineStatus)

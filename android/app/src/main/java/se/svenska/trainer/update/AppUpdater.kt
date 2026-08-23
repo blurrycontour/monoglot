@@ -167,7 +167,7 @@ class AppUpdater(private val context: Context) {
                 }
                 val sessionId = installer.createSession(params)
                 installer.openSession(sessionId).use { session ->
-                    session.openWrite("svenska", 0, apk.length()).use { out ->
+                    session.openWrite("monoglot", 0, apk.length()).use { out ->
                         apk.inputStream().use { it.copyTo(out) }
                         session.fsync(out)
                     }

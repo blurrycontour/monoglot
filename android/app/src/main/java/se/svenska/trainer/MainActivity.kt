@@ -49,7 +49,7 @@ import se.svenska.trainer.ui.screens.PlayerScreen
 import se.svenska.trainer.ui.screens.SettingsScreen
 import se.svenska.trainer.ui.screens.SystemScreen
 import se.svenska.trainer.ui.screens.WordsScreen
-import se.svenska.trainer.ui.theme.SvenskaTheme
+import se.svenska.trainer.ui.theme.MonoglotTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
                 .collectAsState(initial = "black")
             val accentId by Graph.repository.settings.accentFlow
                 .collectAsState(initial = "default")
-            SvenskaTheme(themeId = themeId, accentId = accentId) { App() }
+            MonoglotTheme(themeId = themeId, accentId = accentId) { App() }
         }
     }
 
@@ -106,7 +106,12 @@ fun App() {
     // Reconnect on launch so the mini player reappears if playback survived
     // the activity, which it does: the service outlives the UI.
     val context = LocalContext.current
-    LaunchedEffect(Unit) { PlaybackHolder.connect(context) }
+    LaunchedEffect(Unit) {
+        PlaybackHolder.connect(context)
+        // The service may have been torn down between launches, in which case
+        // there is nothing to show unless the last item is restored explicitly.
+        PlaybackHolder.restoreLastIfIdle(context)
+    }
 
     UpdateGate()
 

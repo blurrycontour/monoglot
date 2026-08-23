@@ -41,7 +41,12 @@ import kotlinx.coroutines.launch
 import se.svenska.trainer.data.Graph
 import se.svenska.trainer.data.ItemSummary
 import se.svenska.trainer.data.PipelineStatus
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import se.svenska.trainer.data.SourceStats
+import se.svenska.trainer.player.PlaybackHolder
 import se.svenska.trainer.ui.util.Dates
 import se.svenska.trainer.ui.util.formatDuration
 import se.svenska.trainer.ui.util.remainingLabel
@@ -103,6 +108,17 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Refreshes without the spinner, for lifecycle-driven updates. */
+    fun refreshQuietly() {
+        viewModelScope.launch {
+            repo.syncProgress()
+            repo.items(_state.value.sourceFilter).onSuccess { items ->
+                val downloaded = repo.offline.downloads.all().map { it.itemId }.toSet()
+                _state.value = _state.value.copy(items = items, downloadedIds = downloaded)
+            }
+        }
+    }
+
     private suspend fun refreshMeta() {
         runCatching { repo.api.system() }.onSuccess {
             _state.value = _state.value.copy(sources = it.sources)
@@ -134,7 +150,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         pollJob?.cancel(); pollJob = null
     }
 
-    fun setFilter(slug: String?) {
+    fun setSourceFilter(slug: String?) {
         _state.value = _state.value.copy(sourceFilter = slug)
         refresh()
     }
@@ -172,6 +188,14 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun clearProgress(item: ItemSummary) {
+        viewModelScope.launch {
+            runCatching { repo.api.resetProgress(item.id) }
+            runCatching { repo.clearLocalProgress(item.id) }
+            refresh()
+        }
+    }
+
     override fun onCleared() { stopPolling(); super.onCleared() }
 
     /** Visible list after client-side filters. */
@@ -196,7 +220,21 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
     val haptics = LocalHapticFeedback.current
     val pullState = rememberPullToRefreshState()
 
+    // Returning from the player must show the progress just made, without
+    // requiring a manual pull to refresh.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) vm.refreshQuietly()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val nowPlaying by PlaybackHolder.now.collectAsState()
+    LaunchedEffect(nowPlaying.itemId) { vm.refreshQuietly() }
+
     var filterSheet by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf<ItemSummary?>(null) }
 
     Scaffold(
         topBar = {
@@ -226,7 +264,6 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
                         }
                     }
                 },
-                windowInsets = WindowInsets(0),
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                 ),
@@ -234,12 +271,17 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
         },
         containerColor = Color.Transparent,
     ) { padding ->
-        PullToRefreshBox(
-            isRefreshing = state.refreshing,
-            onRefresh = { vm.refresh() },
-            state = pullState,
-            modifier = Modifier.fillMaxSize().padding(padding),
-        ) {
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            // Outside the pull-to-refresh region on purpose: a horizontal swipe
+            // across the chips used to arm the refresh gesture as well.
+            SourceFilterRow(state) { vm.setSourceFilter(it) }
+
+            PullToRefreshBox(
+                isRefreshing = state.refreshing,
+                onRefresh = { vm.refresh() },
+                state = pullState,
+                modifier = Modifier.fillMaxSize(),
+            ) {
             val visible = vm.visible(state)
             LaunchedEffect(state.filter) { /* re-compose on filter change */ }
 
@@ -247,10 +289,6 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 24.dp),
             ) {
-                item {
-                    SourceFilterRow(state) { vm.setFilter(it) }
-                }
-
                 state.status?.let { status ->
                     if (status.processing > 0 || status.failed > 0) {
                         item { ProcessingBanner(status) }
@@ -280,6 +318,7 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
                                         vm.toggleDownload(item)
                                     },
                                     onArchive = { vm.archive(item) },
+                                    onClearProgress = { confirmClear = item },
                                     modifier = Modifier.animateItem(),
                                 )
                             }
@@ -290,12 +329,35 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
         }
     }
 
+    }
+
     if (filterSheet) {
         FilterSheet(
             current = state.filter,
             counts = vm.counts(state),
             onSelect = { vm.setFilter(it); filterSheet = false },
             onDismiss = { filterSheet = false },
+        )
+    }
+
+    confirmClear?.let { target ->
+        AlertDialog(
+            onDismissRequest = { confirmClear = null },
+            title = { Text("Clear progress?") },
+            text = {
+                Text(
+                    "\"${Dates.label(Dates.parse(target.publishedAt))}\" will read as unheard " +
+                        "and start from the beginning next time.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.clearProgress(target); confirmClear = null }) {
+                    Text("Clear")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = null }) { Text("Cancel") }
+            },
         )
     }
 }
@@ -425,6 +487,7 @@ private fun EpisodeCard(
     onOpen: () -> Unit,
     onToggleDownload: () -> Unit,
     onArchive: () -> Unit,
+    onClearProgress: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -484,13 +547,45 @@ private fun EpisodeCard(
                     }
                 }
 
-                DownloadButton(downloaded, busy, onToggleDownload)
+                // Downloaded state stays visible as a small marker; the action
+                // itself lives in the menu to keep the card uncluttered.
+                if (busy) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                } else if (downloaded) {
+                    Icon(
+                        Icons.Default.OfflinePin,
+                        contentDescription = "Saved for offline",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
 
                 Box {
                     IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
                         Icon(Icons.Default.MoreVert, "More actions", Modifier.size(20.dp))
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text(if (downloaded) "Remove download" else "Save for offline") },
+                            leadingIcon = {
+                                Icon(
+                                    if (downloaded) Icons.Default.DownloadDone
+                                    else Icons.Default.Download,
+                                    null,
+                                )
+                            },
+                            onClick = { menuOpen = false; onToggleDownload() },
+                        )
+                        if (item.positionMs > 0 || item.completed) {
+                            DropdownMenuItem(
+                                text = { Text("Clear progress") },
+                                leadingIcon = { Icon(Icons.Default.RestartAlt, null) },
+                                onClick = { menuOpen = false; onClearProgress() },
+                            )
+                        }
+                        HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("Free up server space") },
                             leadingIcon = { Icon(Icons.Default.DeleteSweep, null) },

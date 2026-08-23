@@ -17,6 +17,9 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -68,7 +71,7 @@ private fun typographyFor(theme: AppTheme): Typography {
 }
 
 @Composable
-fun SvenskaTheme(
+fun MonoglotTheme(
     themeId: String = "black",
     accentId: String = "default",
     content: @Composable () -> Unit,
@@ -153,7 +156,7 @@ private fun Modifier.themeOrnament(
                 end = Offset(size.width, size.height * 0.7f),
             )
         )
-        val path = androidx.compose.ui.graphics.Path().apply {
+        val path = Path().apply {
             moveTo(0f, size.height * 0.16f)
             var x = 0f
             while (x <= size.width) {
@@ -165,20 +168,90 @@ private fun Modifier.themeOrnament(
             close()
         }
         drawPath(path, primary.copy(alpha = 0.05f))
+
+        // Night sky: a deterministic star field, so it does not shimmer on
+        // every recomposition, plus two ringed planets.
+        var seed = 987654321
+        fun rnd(): Float {
+            seed = seed * 1103515245 + 12345
+            return ((seed ushr 16) and 0x7FFF) / 32767f
+        }
+        repeat(90) {
+            val x = rnd() * size.width
+            val y = rnd() * size.height
+            val r = 0.7f + rnd() * 1.5f
+            drawCircle(Color.White.copy(alpha = 0.05f + rnd() * 0.09f), radius = r, center = Offset(x, y))
+        }
+        // A few brighter stars with cross flare.
+        listOf(0.18f to 0.28f, 0.77f to 0.12f, 0.62f to 0.71f).forEach { (fx, fy) ->
+            val c = Offset(size.width * fx, size.height * fy)
+            drawCircle(Color.White.copy(alpha = 0.20f), radius = 1.7f, center = c)
+            drawLine(Color.White.copy(alpha = 0.10f),
+                Offset(c.x - 7f, c.y), Offset(c.x + 7f, c.y), strokeWidth = 1f)
+            drawLine(Color.White.copy(alpha = 0.10f),
+                Offset(c.x, c.y - 7f), Offset(c.x, c.y + 7f), strokeWidth = 1f)
+        }
+        // Planet with a tilted ring.
+        val pc = Offset(size.width * 0.82f, size.height * 0.20f)
+        val pr = size.width * 0.075f
+        drawCircle(secondary.copy(alpha = 0.13f), radius = pr, center = pc)
+        drawCircle(secondary.copy(alpha = 0.07f), radius = pr * 0.62f,
+            center = Offset(pc.x - pr * 0.28f, pc.y - pr * 0.22f))
+        rotate(-20f, pc) {
+            drawOval(
+                color = primary.copy(alpha = 0.13f),
+                topLeft = Offset(pc.x - pr * 1.75f, pc.y - pr * 0.30f),
+                size = androidx.compose.ui.geometry.Size(pr * 3.5f, pr * 0.60f),
+                style = Stroke(width = 2f),
+            )
+        }
+        // Smaller distant moon.
+        drawCircle(primary.copy(alpha = 0.10f), radius = size.width * 0.032f,
+            center = Offset(size.width * 0.14f, size.height * 0.86f))
     }
 
-    // Large soft organic shapes, low in the frame.
+    // Forest: soft canopy shapes plus scattered leaves in the accent colour.
     Ornament.BLOBS -> drawBehind {
         drawCircle(
-            primary.copy(alpha = 0.07f),
+            primary.copy(alpha = 0.06f),
             radius = size.width * 0.55f,
-            center = Offset(size.width * 0.85f, size.height * 0.12f),
+            center = Offset(size.width * 0.85f, size.height * 0.10f),
         )
         drawCircle(
-            secondary.copy(alpha = 0.05f),
+            secondary.copy(alpha = 0.045f),
             radius = size.width * 0.45f,
-            center = Offset(size.width * 0.05f, size.height * 0.82f),
+            center = Offset(size.width * 0.05f, size.height * 0.84f),
         )
+
+        // Leaves. Each is two mirrored quadratic curves with a midrib, rotated
+        // by a per-leaf angle so the scatter does not read as a pattern.
+        val leaves = listOf(
+            Triple(0.12f, 0.06f, -22f), Triple(0.84f, 0.30f, 34f),
+            Triple(0.22f, 0.46f, 12f), Triple(0.72f, 0.62f, -48f),
+            Triple(0.10f, 0.74f, 58f), Triple(0.88f, 0.88f, -14f),
+            Triple(0.44f, 0.94f, 26f), Triple(0.60f, 0.16f, -66f),
+        )
+        leaves.forEach { (fx, fy, deg) ->
+            val cx = size.width * fx
+            val cy = size.height * fy
+            val len = size.width * 0.085f
+            val wid = len * 0.46f
+            rotate(deg, Offset(cx, cy)) {
+                val leaf = Path().apply {
+                    moveTo(cx, cy - len / 2f)
+                    quadraticTo(cx + wid, cy, cx, cy + len / 2f)
+                    quadraticTo(cx - wid, cy, cx, cy - len / 2f)
+                    close()
+                }
+                drawPath(leaf, primary.copy(alpha = 0.075f))
+                drawLine(
+                    color = primary.copy(alpha = 0.11f),
+                    start = Offset(cx, cy - len / 2f),
+                    end = Offset(cx, cy + len / 2f),
+                    strokeWidth = 1.1f,
+                )
+            }
+        }
     }
 
     // Comic halftone dots, coarse and regular.

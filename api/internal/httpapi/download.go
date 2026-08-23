@@ -60,11 +60,11 @@ func (s *Server) downloadAPK(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
-	w.Header().Set("Content-Disposition", `attachment; filename="svenska.apk"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="monoglot.apk"`)
 	// Never let a stale APK be served from cache: the whole point of this page
 	// is getting the newest build onto the phone.
 	w.Header().Set("Cache-Control", "no-store, must-revalidate")
-	http.ServeContent(w, r, "svenska.apk", info.ModTime(), mustOpen(w, s.cfg.APKPath))
+	http.ServeContent(w, r, "monoglot.apk", info.ModTime(), mustOpen(w, s.cfg.APKPath))
 }
 
 func mustOpen(w http.ResponseWriter, path string) *os.File {
@@ -80,7 +80,7 @@ var downloadTmpl = template.Must(template.New("download").Parse(`<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Svenska — install</title>
+<title>Monoglot — install</title>
 <style>
   :root { color-scheme: light dark; --fg:#1c1917; --muted:#57534e; --bg:#fafaf9;
           --card:#fff; --accent:#2563eb; --line:#e7e5e4; }
@@ -111,11 +111,11 @@ var downloadTmpl = template.Must(template.New("download").Parse(`<!doctype html>
   .none { color:var(--muted); text-align:center; padding:14px 0; }
 </style>
 </head><body><main>
-  <h1>Svenska</h1>
+  <h1>Monoglot</h1>
   <p class="sub">Listening trainer — Android app</p>
   <div class="card">
     {{if .Available}}
-      <a class="btn" href="/download/svenska.apk">Download APK</a>
+      <a class="btn" href="/download/monoglot.apk">Download APK</a>
       <dl>
         {{if .Version}}<dt>Version</dt><dd>{{.Version}}</dd>{{end}}
         <dt>Size</dt><dd>{{.Size}}</dd>

@@ -1,4 +1,4 @@
-# Svenska Listening Trainer
+# Monoglot
 
 Personal, single-user Swedish listening-comprehension app. Self-hosted in a
 homelab. Read `SPEC.md` before changing behaviour — it defines what is
@@ -37,6 +37,10 @@ cd api && GOWORK=off go test ./...          # GOWORK=off is required, see below
 `GOWORK=off` is mandatory for Go commands: a parent `go.work` at
 `~/repos/go.work` otherwise captures this module.
 
+The Android `applicationId` is still `se.svenska.trainer`. Changing it would
+make Android treat the app as a different install, breaking in-place updates
+and discarding downloads and settings. The user-visible branding is Monoglot.
+
 ## Non-obvious constraints
 
 - **Milliseconds as integers everywhere.** Float timestamps cause off-by-one
@@ -54,6 +58,13 @@ cd api && GOWORK=off go test ./...          # GOWORK=off is required, see below
 - **SALDO multiword lemmas are filtered at import.** They balloon `forms` and are
   noise for single-token lookup.
 - **Range requests on the audio endpoint are mandatory.** Use `http.ServeFile`.
+- **Never pipe a command into `head` under `set -o pipefail`.** The early close
+  sends SIGPIPE upstream and fails the script even though the read succeeded.
+  This has now caused two real bugs: a truncated SALDO import and a corrupt
+  APK version manifest.
+- **`scripts/android.sh` publishes only on release tasks**, and reads the
+  version back out of the built APK. Publishing a stale APK under a fresh
+  version number makes the in-app updater loop forever.
 - **Disk is tight.** Whisper models, Postgres, and the Gradle cache all compete.
   `docker builder prune -af` reclaims the most. A failing build that gets piped
   through `tail` will silently keep the old image running — always check exit
