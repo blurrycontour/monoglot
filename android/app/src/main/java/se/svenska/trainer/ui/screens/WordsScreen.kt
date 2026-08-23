@@ -55,12 +55,22 @@ enum class WordFilter(val label: String, val status: String?) {
 class WordsViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = Graph.repository
 
+    // The whole vocabulary is held and filtered on the client. It is a list of
+    // hundreds, not thousands, and holding it is what lets the chips carry
+    // totals and lets a status change show immediately instead of after a
+    // round trip.
+    private val _all = MutableStateFlow<List<WordRow>>(emptyList())
+
     private val _words = MutableStateFlow<List<WordRow>>(emptyList())
     val words = _words.asStateFlow()
 
     // Learning is the default view: it is the list you would actually work on.
     private val _filter = MutableStateFlow(WordFilter.LEARNING)
     val filter = _filter.asStateFlow()
+
+    /** How many words each chip stands for. */
+    private val _counts = MutableStateFlow<Map<WordFilter, Int>>(emptyMap())
+    val counts = _counts.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
@@ -76,25 +86,38 @@ class WordsViewModel(app: Application) : AndroidViewModel(app) {
     fun load() {
         viewModelScope.launch {
             _loading.value = true
-            runCatching { repo.api.words(_filter.value.status) }
+            runCatching { repo.api.words(null) }
                 .onSuccess {
                     // Server orders by last_seen already; keep that. Sorting by
                     // status would bury the words just looked up.
-                    _words.value = it
+                    _all.value = it
                     _error.value = null
+                    applyFilter()
                 }
                 .onFailure { _error.value = it.message ?: "Cannot reach server" }
             _loading.value = false
         }
     }
 
+    private fun applyFilter() {
+        val all = _all.value
+        _words.value = all.filter { w -> _filter.value.status?.let { it == w.status } ?: true }
+        _counts.value = WordFilter.entries.associateWith { f ->
+            all.count { w -> f.status?.let { it == w.status } ?: true }
+        }
+    }
+
     fun setFilter(f: WordFilter) {
         _filter.value = f
         _selected.value = emptySet()
-        load()
+        applyFilter()
     }
 
     fun setStatus(lemma: String, status: String) {
+        // Applied locally first: the round trip is not slow, but the list
+        // visibly lagged the tap that caused it.
+        _all.value = _all.value.map { if (it.lemma == lemma) it.copy(status = status) else it }
+        applyFilter()
         viewModelScope.launch {
             repo.setWordStatus(lemma, status)
             load()
@@ -130,7 +153,8 @@ class WordsViewModel(app: Application) : AndroidViewModel(app) {
     /** Full definitions for the detail sheet. Looked up rather than stored on
      *  the row so the list itself stays light. */
     suspend fun details(lemma: String): List<Candidate> =
-        runCatching { repo.api.lookup(lemma).candidates }.getOrDefault(emptyList())
+        runCatching { repo.api.lookup(lemma, record = false).candidates }
+            .getOrDefault(emptyList())
 
     suspend fun exportUrl(status: String): String {
         val base = repo.settings.serverUrl().trimEnd('/')
@@ -148,6 +172,7 @@ fun WordsScreen() {
     val error by vm.error.collectAsState()
     val loading by vm.loading.collectAsState()
     val selected by vm.selected.collectAsState()
+    val counts by vm.counts.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -157,6 +182,10 @@ fun WordsScreen() {
 
     Scaffold(
         containerColor = Color.Transparent,
+        // The tab pager already sits above the bottom bar, so the Scaffold must
+        // not reserve the navigation-bar inset a second time: that left a dead
+        // strip that clipped the last row of content short of the bar.
+        contentWindowInsets = WindowInsets(0),
         contentColor = MaterialTheme.colorScheme.onBackground,
         topBar = {
             if (selected.isNotEmpty()) {
@@ -211,7 +240,7 @@ fun WordsScreen() {
                     FilterChip(
                         selected = filter == f,
                         onClick = { vm.setFilter(f) },
-                        label = { Text(f.label) },
+                        label = { Text("${f.label}  ${counts[f] ?: 0}") },
                     )
                 }
             }
@@ -526,33 +555,44 @@ private fun PracticeSheet(
                 )
             }
 
-            Spacer(Modifier.height(28.dp))
-            Text(
-                current?.lemma.orEmpty(),
-                fontSize = 34.sp,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(20.dp))
+            // Bounded and scrollable: a word with a dozen senses would
+            // otherwise grow the sheet until the answer buttons fell off the
+            // bottom, and expanding the sheet did not bring them back.
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 200.dp, max = 340.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.height(28.dp))
+                Text(
+                    current?.lemma.orEmpty(),
+                    fontSize = 34.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(20.dp))
 
-            AnimatedContent(
-                targetState = revealed,
-                transitionSpec = { fadeIn() togetherWith fadeOut() },
-                label = "reveal",
-            ) { show ->
-                if (show) {
-                    Column(Modifier.fillMaxWidth().heightIn(min = 110.dp)) {
-                        DefinitionBody(candidates)
-                    }
-                } else {
-                    Box(
-                        Modifier.fillMaxWidth().heightIn(min = 110.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        TextButton(onClick = { revealed = true }) {
-                            Icon(Icons.Default.Visibility, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Show meaning")
+                AnimatedContent(
+                    targetState = revealed,
+                    transitionSpec = { fadeIn() togetherWith fadeOut() },
+                    label = "reveal",
+                ) { show ->
+                    if (show) {
+                        Column(Modifier.fillMaxWidth().heightIn(min = 110.dp)) {
+                            DefinitionBody(candidates)
+                        }
+                    } else {
+                        Box(
+                            Modifier.fillMaxWidth().heightIn(min = 110.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            TextButton(onClick = { revealed = true }) {
+                                Icon(Icons.Default.Visibility, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Show meaning")
+                            }
                         }
                     }
                 }

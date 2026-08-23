@@ -43,9 +43,15 @@ func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record the tap. Best effort: a logging failure must never break lookup.
-	itemID := queryInt(r, "item_id", 0)
-	tokenID := queryInt(r, "token_id", 0)
-	go s.recordLookup(lang, itemID, tokenID, res)
+	//
+	// record=0 is for reading your own word list: the count means "times you
+	// failed to parse this while listening", and re-reading a definition you
+	// already collected is not that.
+	if r.URL.Query().Get("record") != "0" {
+		itemID := queryInt(r, "item_id", 0)
+		tokenID := queryInt(r, "token_id", 0)
+		go s.recordLookup(lang, itemID, tokenID, res)
+	}
 
 	writeJSON(w, http.StatusOK, res)
 }

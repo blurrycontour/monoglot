@@ -103,11 +103,14 @@ fun Controls(vm: PlayerViewModel, state: PlayerState) {
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = { vm.previousSegment() }, modifier = Modifier.size(46.dp)) {
-                    Icon(Icons.Default.SkipPrevious, "Previous sentence", Modifier.size(26.dp))
+                IconButton(onClick = { vm.previousSegment() }, modifier = Modifier.size(52.dp)) {
+                    Icon(Icons.Default.SkipPrevious, "Previous sentence", Modifier.size(30.dp))
                 }
-                IconButton(onClick = { vm.skip(-5000) }, modifier = Modifier.size(46.dp)) {
-                    Icon(Icons.Default.Replay5, "Back 5 seconds", Modifier.size(26.dp))
+                // Replay5/Forward5 draw the numeral inside the glyph, so at the
+                // same size as a solid triangle the "5" comes out tiny. Sized up
+                // to read at a glance alongside the play button.
+                IconButton(onClick = { vm.skip(-5000) }, modifier = Modifier.size(52.dp)) {
+                    Icon(Icons.Default.Replay5, "Back 5 seconds", Modifier.size(34.dp))
                 }
                 FilledIconButton(
                     onClick = { vm.playPause() },
@@ -119,11 +122,11 @@ fun Controls(vm: PlayerViewModel, state: PlayerState) {
                         modifier = Modifier.size(34.dp),
                     )
                 }
-                IconButton(onClick = { vm.skip(5000) }, modifier = Modifier.size(46.dp)) {
-                    Icon(Icons.Default.Forward5, "Forward 5 seconds", Modifier.size(26.dp))
+                IconButton(onClick = { vm.skip(5000) }, modifier = Modifier.size(52.dp)) {
+                    Icon(Icons.Default.Forward5, "Forward 5 seconds", Modifier.size(34.dp))
                 }
-                IconButton(onClick = { vm.nextSegment() }, modifier = Modifier.size(46.dp)) {
-                    Icon(Icons.Default.SkipNext, "Next sentence", Modifier.size(26.dp))
+                IconButton(onClick = { vm.nextSegment() }, modifier = Modifier.size(52.dp)) {
+                    Icon(Icons.Default.SkipNext, "Next sentence", Modifier.size(30.dp))
                 }
             }
         }
@@ -184,11 +187,11 @@ private fun PillButton(
             Icon(
                 icon,
                 contentDescription = contentDescription,
-                modifier = Modifier.size(19.dp),
+                modifier = Modifier.size(21.dp),
                 tint = fg,
             )
             Spacer(Modifier.height(2.dp))
-            Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+            Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, color = fg)
         }
     }
@@ -281,8 +284,18 @@ private fun Scrubber(state: PlayerState, onSeek: (Int) -> Unit) {
             Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(formatTime(value.toInt()), style = MaterialTheme.typography.labelSmall)
-            Text(formatTime(duration), style = MaterialTheme.typography.labelSmall)
+            Text(
+                formatTime(value.toInt()),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                formatTime(duration),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

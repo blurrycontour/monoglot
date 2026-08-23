@@ -338,6 +338,10 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
         // LocalContentColor at its black default. Every piece of unstyled text
         // on the screen would otherwise be black regardless of theme.
         containerColor = Color.Transparent,
+        // The tab pager already sits above the bottom bar, so the Scaffold must
+        // not reserve the navigation-bar inset a second time: that left a dead
+        // strip that clipped the last row of content short of the bar.
+        contentWindowInsets = WindowInsets(0),
         contentColor = MaterialTheme.colorScheme.onBackground,
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {

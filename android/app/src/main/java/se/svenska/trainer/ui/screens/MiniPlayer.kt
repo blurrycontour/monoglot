@@ -52,9 +52,7 @@ fun MiniPlayer(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp)
-            // Modest shadow: a large soft one reads as a pale band above the
-            // bar and visually eats content behind it.
-            .shadow(6.dp, RoundedCornerShape(14.dp), clip = false),
+            .shadow(14.dp, RoundedCornerShape(14.dp), clip = false),
         color = MaterialTheme.colorScheme.primaryContainer,
         tonalElevation = 6.dp,
         shape = RoundedCornerShape(14.dp),

@@ -2,7 +2,9 @@ package se.svenska.trainer.ui.screens
 
 import android.app.Application
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -22,6 +24,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import se.svenska.trainer.data.ContainerStat
 import se.svenska.trainer.data.Graph
 import se.svenska.trainer.data.SourceStats
 import se.svenska.trainer.data.SystemInfo
@@ -116,6 +119,10 @@ fun SystemScreen() {
         // LocalContentColor at its black default. Every piece of unstyled text
         // on the screen would otherwise be black regardless of theme.
         containerColor = Color.Transparent,
+        // The tab pager already sits above the bottom bar, so the Scaffold must
+        // not reserve the navigation-bar inset a second time: that left a dead
+        // strip that clipped the last row of content short of the bar.
+        contentWindowInsets = WindowInsets(0),
         contentColor = MaterialTheme.colorScheme.onBackground,
         topBar = { MonoglotTopBar(title = "System") },
         snackbarHost = { SnackbarHost(snackbar) },
@@ -234,6 +241,22 @@ fun SystemScreen() {
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                }
+
+                if (sys.host.containers.isNotEmpty()) {
+                    SectionCard("Monoglot containers") {
+                        sys.host.containers.forEachIndexed { i, c ->
+                            if (i > 0) Spacer(Modifier.height(10.dp))
+                            ContainerRow(c)
+                        }
+                        Text(
+                            "From the Docker socket, mounted read-only. Whisper is the " +
+                                "memory: the worker holds the model until it idles out.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp),
                         )
                     }
                 }
@@ -383,4 +406,46 @@ private fun StatRow(label: String, value: String, emphasise: Boolean = false) {
 private fun formatHours(ms: Long): String {
     val minutes = ms / 60_000
     return if (minutes < 60) "$minutes min" else "%d h %02d min".format(minutes / 60, minutes % 60)
+}
+
+
+/** One container's live figures. The name is the compose service, which is
+ *  what you would type to look at its logs. */
+@Composable
+private fun ContainerRow(c: ContainerStat) {
+    val running = c.state == "running"
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (running) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.error
+                    ),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                c.name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                if (running) "%.0f%% CPU · %s".format(c.cpuPercent, formatBytesShort(c.memBytes))
+                else c.status.ifBlank { c.state },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (running && c.memLimit > 0) {
+            Spacer(Modifier.height(5.dp))
+            LinearProgressIndicator(
+                progress = { (c.memPercent / 100.0).toFloat().coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(4.dp),
+                drawStopIndicator = {},
+            )
+        }
+    }
 }

@@ -41,6 +41,11 @@ services:
       TZ: Europe/Stockholm
     volumes:
       - ./data:/data
+      # Per-container CPU/memory for the System screen. Read-only stops the
+      # socket file being rewritten; it does NOT make the Engine API read-only,
+      # so this is only acceptable because the API issues GETs and stays on the
+      # LAN. A socket proxy would be the fix if either changed.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       # Bound to all interfaces so the phone on the LAN can reach it.
       # This service must not be exposed to the public internet.

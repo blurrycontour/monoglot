@@ -97,6 +97,11 @@ func discoverSR(ctx context.Context, pool *sql.DB, s Source) (int, error) {
 		// content. The spec's (source_id, external_id) key cannot catch that,
 		// so programmes known to air once per day opt into a date-based check.
 		OnePerDay bool `json:"one_per_day"`
+		// How far back to list. Only the newest auto_download_limit items are
+		// fetched; the rest are recorded as archived so "Show more" has a back
+		// catalogue to reveal. Klartext airs twice a day, so 100 episodes is
+		// roughly seven weeks of distinct programmes.
+		DiscoverSize int `json:"discover_size"`
 	}
 	if err := json.Unmarshal(s.Config, &cfg); err != nil {
 		return 0, err
@@ -105,8 +110,13 @@ func discoverSR(ctx context.Context, pool *sql.DB, s Source) (int, error) {
 		return 0, fmt.Errorf("source %s has no program_id in config", s.Slug)
 	}
 
+	size := cfg.DiscoverSize
+	if size <= 0 {
+		size = 100
+	}
+
 	c := srclient.New()
-	eps, err := c.Episodes(ctx, cfg.ProgramID, 20)
+	eps, err := c.Episodes(ctx, cfg.ProgramID, size)
 	if err != nil {
 		return 0, err
 	}

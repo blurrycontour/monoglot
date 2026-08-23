@@ -37,9 +37,11 @@ cd api && GOWORK=off go test ./...          # GOWORK=off is required, see below
 `GOWORK=off` is mandatory for Go commands: a parent `go.work` at
 `~/repos/go.work` otherwise captures this module.
 
-The Android `applicationId` is still `se.svenska.trainer`. Changing it would
-make Android treat the app as a different install, breaking in-place updates
-and discarding downloads and settings. The user-visible branding is Monoglot.
+The Android `applicationId` is `io.blurrycontour.monoglot`; the Kotlin
+namespace and package are still `se.svenska.trainer`, which is internal and not
+worth renaming. Changing `applicationId` again would make Android treat the app
+as a different install: no in-place update, and the local settings (server URL,
+token) and downloaded audio are discarded.
 
 ## Non-obvious constraints
 

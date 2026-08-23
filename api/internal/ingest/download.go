@@ -26,7 +26,7 @@ import (
 func DeferOutOfWindow(ctx context.Context, pool *sql.DB) error {
 	tag, err := pool.ExecContext(ctx, `
 		WITH ranked AS (
-		  SELECT i.id,
+		  SELECT i.id, i.status,
 		         row_number() OVER (
 		           PARTITION BY i.source_id
 		           ORDER BY i.published_at DESC NULLS LAST, i.id DESC
@@ -34,10 +34,13 @@ func DeferOutOfWindow(ctx context.Context, pool *sql.DB) error {
 		         s.auto_download_limit AS lim
 		  FROM items i
 		  JOIN sources s ON s.id = i.source_id
-		  WHERE i.status = 'new'
+		  -- Rank across everything already fetched, not just the new rows.
+		  -- Ranking new rows alone made the window mean "ten more each time
+		  -- discovery reaches further back", which is not what a limit is.
+		  WHERE i.status <> 'archived'
 		)
 		UPDATE items SET status = 'archived'
-		WHERE id IN (SELECT id FROM ranked WHERE rn > lim)`)
+		WHERE id IN (SELECT id FROM ranked WHERE rn > lim AND status = 'new')`)
 	if err != nil {
 		return err
 	}

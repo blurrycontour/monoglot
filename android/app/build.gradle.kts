@@ -26,7 +26,14 @@ android {
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        applicationId = "se.svenska.trainer"
+        // The install identity. Changed from se.svenska.trainer once, with the
+        // Monoglot rebrand: Android treats a new applicationId as a different
+        // app, so that build had to be installed fresh rather than as an
+        // update. Do not change it again for cosmetic reasons.
+        //
+        // The Kotlin namespace stays se.svenska.trainer: it is internal, and
+        // renaming it would touch every file for no behavioural gain.
+        applicationId = "io.blurrycontour.monoglot"
         minSdk = 26
         targetSdk = 35
         // Must increase for Android to accept an update. Supplied by the

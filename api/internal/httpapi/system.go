@@ -157,7 +157,7 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 	info.Storage.TotalBytes = info.Storage.AudioBytes + info.Storage.RawBytes +
 		info.Storage.CacheBytes + info.Storage.APKBytes
 	info.Storage.DiskFree = diskFree(s.cfg.AudioDir)
-	info.Host = readHostStats()
+	info.Host = readHostStats(ctx)
 
 	info.Storage.DatabaseSize = db.FileSize(s.cfg.DatabasePath)
 	s.pool.QueryRowContext(ctx, `SELECT count(*) FROM lexemes`).Scan(&info.Lexicon.Lexemes)

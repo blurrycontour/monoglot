@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"os"
 	"strconv"
 	"strings"
@@ -20,6 +21,10 @@ type HostStats struct {
 	CPUCores          int     `json:"cpu_cores"`
 	Load1             float64 `json:"load1"`
 	Available         bool    `json:"available"`
+	// Per-container figures, when the Docker socket is mounted. The machine
+	// totals above cannot answer "which of my services is using this", and on
+	// a Proxmox guest they describe the hypervisor rather than the VM.
+	Containers []ContainerStat `json:"containers,omitempty"`
 }
 
 // CPU use is a delta between two samples of /proc/stat, so the previous
@@ -31,7 +36,7 @@ var (
 	lastSampled time.Time
 )
 
-func readHostStats() HostStats {
+func readHostStats(ctx context.Context) HostStats {
 	var h HostStats
 
 	if mem, err := os.ReadFile("/proc/meminfo"); err == nil {
@@ -63,6 +68,7 @@ func readHostStats() HostStats {
 
 	h.CPUCores = countCores()
 	h.CPUPercent = sampleCPU()
+	h.Containers = readContainerStats(ctx)
 	return h
 }
 
