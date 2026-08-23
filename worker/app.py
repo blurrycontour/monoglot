@@ -7,6 +7,7 @@ Speaks float seconds; the Go service converts to integer milliseconds at its
 boundary and stores nothing as a float.
 """
 
+import gc
 import logging
 import os
 import threading
@@ -27,10 +28,16 @@ DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "5"))
 
-app = FastAPI(title="svenska-whisper-worker")
-
+app = FastAPI(title="monoglot-whisper-worker")
 _model = None
 _model_lock = threading.Lock()
+_last_used = 0.0
+
+# Whisper weights are the bulk of this container's memory. Between runs there
+# is no reason to hold them: unloading returns the container to roughly its
+# baseline, and reloading costs ~45s on the next transcription, which is
+# negligible against a nightly batch.
+IDLE_UNLOAD_SECONDS = int(os.getenv("WHISPER_IDLE_UNLOAD_SECONDS", "600"))
 # Transcription is CPU-bound. Serialise it so two concurrent requests cannot
 # thrash the box; the Go side already runs items one at a time, this is a belt.
 _transcribe_lock = threading.Lock()
@@ -75,6 +82,8 @@ def health():
         "device": DEVICE,
         "compute_type": COMPUTE_TYPE,
         "loaded": _model is not None,
+        "idle_unload_seconds": IDLE_UNLOAD_SECONDS,
+        "idle_seconds": round(time.time() - _last_used, 1) if _last_used else None,
     }
 
 
@@ -90,7 +99,9 @@ def transcribe(req: TranscribeRequest):
     if not os.path.exists(req.audio_path):
         raise HTTPException(status_code=400, detail=f"no such file: {req.audio_path}")
 
+    global _last_used
     model = get_model()
+    _last_used = time.time()
     t0 = time.time()
 
     with _transcribe_lock:
@@ -126,6 +137,7 @@ def transcribe(req: TranscribeRequest):
                 "words": words,
             })
 
+    _last_used = time.time()
     elapsed = time.time() - t0
     n_words = sum(len(s["words"]) for s in out_segments)
     log.info(
@@ -143,3 +155,31 @@ def transcribe(req: TranscribeRequest):
         "model": MODEL_NAME,
         "segments": out_segments,
     }
+
+
+def _idle_reaper() -> None:
+    """Drops the model after a period with no transcriptions."""
+    global _model
+    while True:
+        time.sleep(30)
+        if IDLE_UNLOAD_SECONDS <= 0 or _model is None:
+            continue
+        idle = time.time() - _last_used
+        if idle < IDLE_UNLOAD_SECONDS:
+            continue
+        with _model_lock:
+            if _model is None:
+                continue
+            # Only unload when nothing is mid-transcription.
+            if not _transcribe_lock.acquire(blocking=False):
+                continue
+            try:
+                log.info("idle for %.0fs, unloading %s", idle, MODEL_NAME)
+                _model = None
+                gc.collect()
+            finally:
+                _transcribe_lock.release()
+
+
+# Started last, so every module-level name the reaper reads already exists.
+threading.Thread(target=_idle_reaper, daemon=True, name="idle-reaper").start()

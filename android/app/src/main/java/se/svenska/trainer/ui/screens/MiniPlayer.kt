@@ -131,7 +131,11 @@ fun MiniPlayerHost(
         enter = slideInVertically { it } + fadeIn(),
         exit = slideOutVertically { it } + fadeOut(),
     ) {
-        MiniPlayer(now = now, onExpand = onExpand)
+        // The host itself must not paint: AnimatedVisibility otherwise leaves a
+        // full-width band behind the rounded mini player.
+        Box(Modifier.fillMaxWidth()) {
+            MiniPlayer(now = now, onExpand = onExpand)
+        }
     }
 }
 

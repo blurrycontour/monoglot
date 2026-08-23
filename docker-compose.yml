@@ -24,6 +24,7 @@ services:
       WHISPER_DEVICE: ${WHISPER_DEVICE}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE}
       WHISPER_BEAM_SIZE: ${WHISPER_BEAM_SIZE}
+      WHISPER_IDLE_UNLOAD_SECONDS: ${WHISPER_IDLE_UNLOAD_SECONDS:-600}
     volumes:
       # The worker reads audio by path, so it must see the same files the API
       # wrote. Read-only: the worker never modifies content.

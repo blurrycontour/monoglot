@@ -75,6 +75,9 @@ data class LibraryState(
     val filter: LibraryFilter = LibraryFilter.ALL,
     val status: PipelineStatus? = null,
     val sources: List<SourceStats> = emptyList(),
+    /** How many items were in flight when this batch started, so progress can
+     *  be shown as a fraction rather than a spinner that never moves. */
+    val batchTotal: Int = 0,
 )
 
 class LibraryViewModel(app: Application) : AndroidViewModel(app) {
@@ -125,18 +128,25 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = _state.value.copy(sources = it.sources)
         }
         val status = runCatching { repo.api.status() }.getOrNull() ?: return
-        _state.value = _state.value.copy(status = status)
+        _state.value = _state.value.copy(status = status, batchTotal = batchTotalFor(status))
         if (status.processing > 0 || status.ingestRunning) startPolling() else stopPolling()
     }
+
+    /** Grows to the high-water mark of a batch and resets once it drains. */
+    private fun batchTotalFor(status: PipelineStatus): Int =
+        if (status.processing == 0) 0
+        else maxOf(_state.value.batchTotal, status.processing)
 
     private fun startPolling() {
         if (pollJob?.isActive == true) return
         pollJob = viewModelScope.launch {
             while (true) {
-                delay(15_000)
+                delay(6_000)
                 val status = runCatching { repo.api.status() }.getOrNull() ?: continue
                 val before = _state.value.status?.ready ?: 0
-                _state.value = _state.value.copy(status = status)
+                _state.value = _state.value.copy(
+                    status = status, batchTotal = batchTotalFor(status),
+                )
                 if (status.ready != before) {
                     repo.items(_state.value.sourceFilter).onSuccess {
                         _state.value = _state.value.copy(items = it)
@@ -152,8 +162,20 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setSourceFilter(slug: String?) {
-        _state.value = _state.value.copy(sourceFilter = slug)
-        refresh()
+        // Deliberately not refresh(): that sets `refreshing`, which is what
+        // PullToRefreshBox renders its indicator from, so tapping a chip
+        // looked like a half-completed pull gesture.
+        _state.value = _state.value.copy(sourceFilter = slug, loading = true)
+        viewModelScope.launch {
+            repo.items(slug).onSuccess { items ->
+                val downloaded = repo.offline.downloads.all().map { it.itemId }.toSet()
+                _state.value = _state.value.copy(
+                    items = items, downloadedIds = downloaded, loading = false,
+                )
+            }.onFailure {
+                _state.value = _state.value.copy(loading = false)
+            }
+        }
     }
 
     fun setFilter(filter: LibraryFilter) {
@@ -276,7 +298,7 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
             ) {
                 state.status?.let { status ->
                     if (status.processing > 0 || status.failed > 0) {
-                        item { ProcessingBanner(status) }
+                        item { ProcessingBanner(status, state.batchTotal) }
                     }
                 }
 
@@ -690,44 +712,64 @@ private fun DownloadButton(downloaded: Boolean, busy: Boolean, onClick: () -> Un
 }
 
 @Composable
-private fun ProcessingBanner(status: PipelineStatus) {
+private fun ProcessingBanner(status: PipelineStatus, batchTotal: Int) {
+    val done = (batchTotal - status.processing).coerceAtLeast(0)
+    val fraction = if (batchTotal > 0) done.toFloat() / batchTotal else 0f
+    val animated by animateFloatAsState(fraction, tween(500), label = "batch")
+
     Surface(
         color = MaterialTheme.colorScheme.secondaryContainer,
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
     ) {
-        Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
             if (status.processing > 0) {
-                CircularProgressIndicator(
-                    Modifier.size(15.dp), strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
-                Spacer(Modifier.width(12.dp))
-                Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "Preparing ${status.processing} episode${if (status.processing == 1) "" else "s"}",
+                        "Preparing episodes",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
+                    Spacer(Modifier.weight(1f))
                     Text(
-                        "They appear here as transcription finishes",
-                        style = MaterialTheme.typography.labelSmall,
+                        if (batchTotal > 0) "$done / $batchTotal" else "${status.processing}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
                 }
-            } else {
-                Icon(Icons.Default.ErrorOutline, null, Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    "${status.failed} episode${if (status.failed == 1) "" else "s"} failed to process",
-                    style = MaterialTheme.typography.bodyMedium,
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { animated },
+                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(CircleShape),
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    trackColor = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.2f),
+                    drawStopIndicator = {},
                 )
+                Spacer(Modifier.height(7.dp))
+                // Naming the stage makes a slow queue legible: transcription
+                // takes about a minute per five-minute episode on CPU.
+                Text(
+                    buildList {
+                        if (status.transcribing > 0) add("transcribing ${status.transcribing}")
+                        if (status.queued > 0) add("${status.queued} queued")
+                        if (status.downloading > 0) add("${status.downloading} downloading")
+                    }.joinToString(" · ").ifEmpty { "working" },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.85f),
+                )
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.ErrorOutline, null, Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "${status.failed} episode${if (status.failed == 1) "" else "s"} failed to process",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
             }
         }
     }

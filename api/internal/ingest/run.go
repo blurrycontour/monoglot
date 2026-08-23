@@ -66,8 +66,35 @@ func (r *Runner) Run(ctx context.Context, reason string) {
 	if err := DownloadPending(ctx, r.pool, r.cfg.AudioDir, 40); err != nil {
 		log.Printf("ERROR ingest: download: %v", err)
 	}
-	if err := TranscribePending(ctx, r.pool, r.cfg.WorkerURL, r.cfg.RawDir, 5); err != nil {
-		log.Printf("ERROR ingest: transcribe: %v", err)
+	// Drain the queue rather than doing a fixed five and stopping. A single
+	// batch left items sitting in 'downloaded' with nothing scheduled to pick
+	// them up until the next nightly run, so the app reported episodes as
+	// preparing for hours while nothing was happening.
+	for pass := 0; ; pass++ {
+		remaining, err := countPending(ctx, r.pool)
+		if err != nil {
+			log.Printf("ERROR ingest: counting pending: %v", err)
+			break
+		}
+		if remaining == 0 {
+			break
+		}
+		if pass > 0 {
+			log.Printf("ingest: %d item(s) still to transcribe", remaining)
+		}
+		if err := TranscribePending(ctx, r.pool, r.cfg.WorkerURL, r.cfg.RawDir, 5); err != nil {
+			log.Printf("ERROR ingest: transcribe: %v", err)
+			break
+		}
+		// Guard against a stage that fails without changing status, which
+		// would otherwise spin here forever.
+		after, err := countPending(ctx, r.pool)
+		if err != nil || after >= remaining {
+			break
+		}
+		if ctx.Err() != nil {
+			break
+		}
 	}
 
 	log.Printf("ingest: run done in %s", time.Since(start).Round(time.Second))
@@ -90,6 +117,14 @@ func (r *Runner) StartCron(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// countPending reports how many items are waiting for transcription.
+func countPending(ctx context.Context, pool *pgxpool.Pool) (int, error) {
+	var n int
+	err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM items WHERE status = 'downloaded'`).Scan(&n)
+	return n, err
 }
 
 func nextRun(now time.Time, hour, min int) time.Time {

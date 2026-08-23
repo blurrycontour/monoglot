@@ -179,6 +179,10 @@ fun SettingsScreen() {
             ThemePicker()
 
             HorizontalDivider()
+            SectionTitle("Reminders")
+            RemindersSection()
+
+            HorizontalDivider()
             SectionTitle("App updates")
             UpdateSection()
 

@@ -6,12 +6,16 @@ import "net/http"
 // fresh install is usable immediately instead of looking empty while the slow
 // transcription stage runs.
 type PipelineStatus struct {
-	Counts        map[string]int `json:"counts"`
-	Ready         int            `json:"ready"`
-	Processing    int            `json:"processing"`
-	Failed        int            `json:"failed"`
-	Archived      int            `json:"archived"`
-	IngestRunning bool           `json:"ingest_running"`
+	Counts     map[string]int `json:"counts"`
+	Ready      int            `json:"ready"`
+	Processing int            `json:"processing"`
+	Failed     int            `json:"failed"`
+	Archived   int            `json:"archived"`
+	// Sub-counts so the app can show real progress rather than a spinner.
+	Queued        int  `json:"queued"` // downloaded, waiting for the worker
+	Transcribing  int  `json:"transcribing"`
+	Downloading   int  `json:"downloading"` // new or mid-download
+	IngestRunning bool `json:"ingest_running"`
 }
 
 func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
@@ -42,8 +46,15 @@ func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
 			// processing made a 175-episode archive read as "preparing 189
 			// episodes" forever.
 			out.Archived = n
+		case "downloaded":
+			out.Queued = n
+			out.Processing += n
+		case "transcribing":
+			out.Transcribing = n
+			out.Processing += n
 		default:
-			// new, downloading, downloaded, transcribing: all still in flight.
+			// new, downloading: fetching audio.
+			out.Downloading += n
 			out.Processing += n
 		}
 	}

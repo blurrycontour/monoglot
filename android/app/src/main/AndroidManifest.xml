@@ -11,6 +11,11 @@
     <!-- Self-update: the app downloads its own APK from the homelab server and
          hands it to Android's installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Practice reminders: alarms must survive reboot, and Android 12+ gates
+         exact timing behind its own permission. Requested but not required:
+         the scheduler falls back to inexact alarms if it is not granted. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:allowBackup="true"
@@ -34,6 +39,18 @@
         <receiver
             android:name=".update.InstallReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".reminders.ReminderReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".reminders.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name=".player.PlaybackService"

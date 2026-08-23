@@ -21,7 +21,10 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -61,6 +64,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Graph.init(applicationContext)
         requestNotificationPermission()
+        rescheduleReminders()
         enableEdgeToEdge()
         setContent {
             val themeId by Graph.repository.settings.themeFlow
@@ -68,6 +72,15 @@ class MainActivity : ComponentActivity() {
             val accentId by Graph.repository.settings.accentFlow
                 .collectAsState(initial = "default")
             MonoglotTheme(themeId = themeId, accentId = accentId) { App() }
+        }
+    }
+
+    /** Alarms are dropped on app update as well as on reboot. */
+    private fun rescheduleReminders() {
+        val ctx = applicationContext
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+            val store = se.svenska.trainer.reminders.ReminderStore(ctx)
+            se.svenska.trainer.reminders.ReminderScheduler.rescheduleAll(ctx, store.all())
         }
     }
 
@@ -130,12 +143,15 @@ fun App() {
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut(),
             ) {
-                Column {
+                // The bar owns its own background; without this the container
+                // behind the mini player painted an opaque strip around it.
+                Column(Modifier.background(Color.Transparent)) {
                     MiniPlayerHost(
                         visible = true,
                         now = now,
                         onExpand = { nav.navigate("player/${now.itemId}") },
                     )
+                    Spacer(Modifier.height(6.dp))
                 NavigationBar {
                     TABS.forEachIndexed { index, tab ->
                         NavigationBarItem(
