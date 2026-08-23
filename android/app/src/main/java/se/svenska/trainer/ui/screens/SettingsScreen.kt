@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -136,10 +137,11 @@ fun SettingsScreen() {
     }
 
     Scaffold(
+        // Transparent so the theme's background art shows through; the default
+        // paints an opaque surface over it.
+        containerColor = Color.Transparent,
         topBar = {
-            LargeTopAppBar(
-                title = { Text("Settings", fontWeight = FontWeight.SemiBold) },
-            )
+            MonoglotTopBar(title = "Settings")
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->

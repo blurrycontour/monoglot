@@ -46,6 +46,9 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
     DisposableEffect(Unit) { onDispose { vm.flushProgress() } }
 
     Scaffold(
+        // Transparent so the theme's background art shows through; the default
+        // paints an opaque surface over it.
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
                 title = {
@@ -65,9 +68,6 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
-                },
-                actions = {
-                    TranscriptModeButton(state.transcriptMode) { vm.cycleTranscriptMode() }
                 },
             )
         },
@@ -100,19 +100,6 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
     }
 }
 
-@Composable
-private fun TranscriptModeButton(mode: TranscriptMode, onClick: () -> Unit) {
-    val (icon, label) = when (mode) {
-        TranscriptMode.HIDDEN -> Icons.Default.VisibilityOff to "Hidden"
-        TranscriptMode.REVEAL -> Icons.Default.Visibility to "Reveal"
-        TranscriptMode.FULL -> Icons.Default.Article to "Full"
-    }
-    TextButton(onClick = onClick) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(label)
-    }
-}
 
 @Composable
 private fun TranscriptArea(vm: PlayerViewModel, state: se.svenska.trainer.player.PlayerState) {
@@ -145,7 +132,7 @@ private fun HiddenView(isPlaying: Boolean) {
         )
         Spacer(Modifier.height(20.dp))
         Text(
-            "Lyssna",
+            "Listening",
             style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

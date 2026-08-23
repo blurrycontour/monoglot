@@ -1,7 +1,9 @@
 package se.svenska.trainer.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,11 +39,20 @@ fun Controls(vm: PlayerViewModel, state: PlayerState) {
     var speedSheet by remember { mutableStateOf(false) }
     var textSheet by remember { mutableStateOf(false) }
 
-    Surface(tonalElevation = 3.dp, shadowElevation = 8.dp) {
+    // Opaque and flush to the bottom edge. It previously floated on a
+    // transparent scaffold, leaving a gap above the gesture bar and letting the
+    // transcript show through behind the controls.
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 3.dp,
+        shadowElevation = 12.dp,
+    ) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 10.dp),
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp)
+                .padding(top = 8.dp, bottom = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Scrubber(state) { vm.seekTo(it) }
@@ -57,11 +68,13 @@ fun Controls(vm: PlayerViewModel, state: PlayerState) {
                     icon = Icons.Default.Speed,
                     contentDescription = "Playback speed",
                     onClick = { speedSheet = true },
+                    // Non-default speed is a state worth seeing at a glance.
+                    highlighted = kotlin.math.abs(state.speed - 1.0f) > 0.01f,
                 )
 
                 FilledTonalButton(
                     onClick = { vm.replaySegment() },
-                    modifier = Modifier.weight(1f).height(48.dp),
+                    modifier = Modifier.weight(1f).height(56.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp),
                     colors = ButtonDefaults.filledTonalButtonColors(
                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -147,33 +160,33 @@ private fun PillButton(
     onClick: () -> Unit,
     highlighted: Boolean = false,
 ) {
+    // Sized to match the Replay button and given a visible border: on
+    // surfaceVariant against a dark surface these were nearly invisible.
+    val fg = if (highlighted) MaterialTheme.colorScheme.onPrimaryContainer
+             else MaterialTheme.colorScheme.onSurface
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(26.dp),
         color = if (highlighted) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.height(48.dp).widthIn(min = 62.dp),
+                else MaterialTheme.colorScheme.surfaceContainerHighest,
+        border = if (highlighted) null
+                 else BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.height(56.dp).widthIn(min = 76.dp),
     ) {
         Column(
-            Modifier.padding(horizontal = 10.dp),
+            Modifier.padding(horizontal = 12.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Icon(
                 icon,
                 contentDescription = contentDescription,
-                modifier = Modifier.size(16.dp),
-                tint = if (highlighted) MaterialTheme.colorScheme.onPrimaryContainer
-                       else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(19.dp),
+                tint = fg,
             )
-            Text(
-                label,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                color = if (highlighted) MaterialTheme.colorScheme.onPrimaryContainer
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Spacer(Modifier.height(2.dp))
+            Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, color = fg)
         }
     }
 }

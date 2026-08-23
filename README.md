@@ -7,8 +7,9 @@ Built to the spec in [SPEC.md](SPEC.md).
 
 ## What it does
 
-Nightly, it pulls new episodes from **SR Klartext** and the **8 Sidor** daily
-news podcast, transcribes them with **KB-Whisper** (KBLab's Swedish-finetuned
+Nightly, it pulls new episodes from four Swedish sources — **SR Klartext**,
+the **8 Sidor** daily news podcast, **Vetenskapsradion Nyheter** (daily science
+news), and **Forskning & Framsteg: Artiklar** (read magazine articles) — transcribes them with **KB-Whisper** (KBLab's Swedish-finetuned
 Whisper) at word-level timestamps, resolves every word to a lemma via **SALDO**
 morphology, and warms **Folkets lexikon** definitions for the whole episode.
 
@@ -138,6 +139,24 @@ vocabulary, and `languages` holds each language's ASR hint.
 Adding a language means implementing `lexicon.DictionaryProvider` and
 `lexicon.MorphologyProvider` and registering them in
 `api/internal/lexicon/register.go`. No schema migration required.
+
+## Sources
+
+| Source | Kind | Notes |
+|---|---|---|
+| SR Klartext | SR API (493) | ~5 min daily news, slow and clear |
+| 8 Sidor | Acast-style RSS | daily news podcast, human read |
+| Vetenskapsradion Nyheter | SR API (406) | ~5 min daily science news |
+| Forskning & Framsteg: Artiklar | Acast RSS | ~9 min read articles. Archive: no new episodes since Feb 2024 |
+
+fof.se's own `/feed` carries articles with no audio, and the site embeds
+Spotify players rather than hosting files. The Acast RSS behind those embeds is
+the real feed.
+
+Only the newest `auto_download_limit` items per source (default 10) are
+downloaded automatically. Older items are marked `archived` — known about, no
+audio on disk, fetchable on demand from the app. That keeps a 175-episode
+archive from filling the disk on first sync.
 
 ## Managing storage
 

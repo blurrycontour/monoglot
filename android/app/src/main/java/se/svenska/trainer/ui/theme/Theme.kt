@@ -27,6 +27,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.sin
 
 /** The active theme, so screens can react to ornament and shape choices. */
@@ -254,7 +256,7 @@ private fun Modifier.themeOrnament(
         }
     }
 
-    // Comic halftone dots, coarse and regular.
+    // Comic book: halftone dots plus a few speed-line bursts.
     Ornament.HALFTONE -> drawBehind {
         val step = 26f
         var y = 0f
@@ -268,6 +270,44 @@ private fun Modifier.themeOrnament(
             y += step
             row++
         }
+        // Radiating bursts, the comic panel cue.
+        listOf(
+            Triple(0.90f, 0.09f, size.width * 0.34f),
+            Triple(0.08f, 0.55f, size.width * 0.26f),
+            Triple(0.72f, 0.93f, size.width * 0.30f),
+        ).forEach { (fx, fy, len) ->
+            val c = Offset(size.width * fx, size.height * fy)
+            repeat(12) { i ->
+                val a = (i * 30f) * (PI / 180f).toFloat()
+                drawLine(
+                    color = secondary.copy(alpha = 0.055f),
+                    start = Offset(c.x + cos(a) * len * 0.32f, c.y + sin(a) * len * 0.32f),
+                    end = Offset(c.x + cos(a) * len, c.y + sin(a) * len),
+                    strokeWidth = 2.5f,
+                )
+            }
+        }
+    }
+
+    // Editorial hairline rules, like a ruled notebook seen at low contrast.
+    Ornament.RULES -> drawBehind {
+        var y = size.height * 0.06f
+        while (y < size.height) {
+            drawLine(
+                color = primary.copy(alpha = 0.035f),
+                start = Offset(0f, y),
+                end = Offset(size.width, y),
+                strokeWidth = 1f,
+            )
+            y += 46f
+        }
+        // A single accent margin rule, as on ruled paper.
+        drawLine(
+            color = primary.copy(alpha = 0.10f),
+            start = Offset(size.width * 0.085f, 0f),
+            end = Offset(size.width * 0.085f, size.height),
+            strokeWidth = 1.5f,
+        )
     }
 }
 

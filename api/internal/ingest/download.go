@@ -16,8 +16,42 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// DeferOutOfWindow marks items outside their source's auto-download window as
+// archived rather than downloading them.
+//
+// Archived is exactly the right state: it already means "we know about this,
+// the audio is not on disk, and it can be fetched on demand". Leaving them as
+// 'new' instead would have the pipeline retry them forever and the app report
+// them as perpetually processing.
+func DeferOutOfWindow(ctx context.Context, pool *pgxpool.Pool) error {
+	tag, err := pool.Exec(ctx, `
+		WITH ranked AS (
+		  SELECT i.id,
+		         row_number() OVER (
+		           PARTITION BY i.source_id
+		           ORDER BY i.published_at DESC NULLS LAST, i.id DESC
+		         ) AS rn,
+		         s.auto_download_limit AS lim
+		  FROM items i
+		  JOIN sources s ON s.id = i.source_id
+		  WHERE i.status = 'new'
+		)
+		UPDATE items SET status = 'archived'
+		WHERE id IN (SELECT id FROM ranked WHERE rn > lim)`)
+	if err != nil {
+		return err
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		log.Printf("download: deferred %d item(s) outside the auto-download window", n)
+	}
+	return nil
+}
+
 // DownloadPending moves every item in status='new' through to 'downloaded'.
 func DownloadPending(ctx context.Context, pool *pgxpool.Pool, audioDir string, limit int) error {
+	if err := DeferOutOfWindow(ctx, pool); err != nil {
+		return err
+	}
 	rows, err := pool.Query(ctx, `
 		SELECT id, audio_url FROM items
 		WHERE status = 'new' AND audio_url IS NOT NULL AND audio_url <> ''

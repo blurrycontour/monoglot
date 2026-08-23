@@ -9,7 +9,7 @@ import androidx.compose.ui.graphics.Color
  * Background ornament for a theme. Kept as an enum rather than arbitrary
  * drawing code so a theme stays data, and the renderer stays in one place.
  */
-enum class Ornament { NONE, PAPER_GRAIN, SOFT_WASH, AURORA, BLOBS, HALFTONE }
+enum class Ornament { NONE, PAPER_GRAIN, SOFT_WASH, AURORA, BLOBS, HALFTONE, RULES }
 
 /** Shape language. Cartoonish themes want visibly rounder, chunkier cards. */
 enum class ShapeStyle { SHARP, NORMAL, ROUNDED }
@@ -85,9 +85,9 @@ private val Dagsljus = AppTheme(
 private val Black = AppTheme(
     id = "black",
     name = "Bläck",
-    description = "Near-black, indigo, high contrast",
+    description = "Near-black, indigo, editorial rules",
     dark = true,
-    ornament = Ornament.NONE,
+    ornament = Ornament.RULES,
     shapes = ShapeStyle.SHARP,
     scheme = darkColorScheme(
         primary = Color(0xFF93B4FF),

@@ -18,6 +18,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -116,6 +117,9 @@ fun WordsScreen() {
     var confirmDelete by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
+        // Transparent so the theme's background art shows through; the default
+        // paints an opaque surface over it.
+        containerColor = Color.Transparent,
         topBar = {
             if (selected.isNotEmpty()) {
                 TopAppBar(
@@ -136,9 +140,7 @@ fun WordsScreen() {
                 )
                 return@Scaffold
             }
-            TopAppBar(
-                title = { Text("Words", fontWeight = FontWeight.SemiBold) },
-                actions = {
+            MonoglotTopBar(title = "Words", actions = {
                     IconButton(onClick = { confirmDelete = "all" }) {
                         Icon(Icons.Default.DeleteSweep, "Delete all shown")
                     }
@@ -150,8 +152,7 @@ fun WordsScreen() {
                             context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
                         }
                     }) { Icon(Icons.Default.Share, "Export for Anki") }
-                },
-            )
+            })
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {

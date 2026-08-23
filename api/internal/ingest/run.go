@@ -63,7 +63,7 @@ func (r *Runner) Run(ctx context.Context, reason string) {
 	if err := Discover(ctx, r.pool); err != nil {
 		log.Printf("ERROR ingest: discover: %v", err)
 	}
-	if err := DownloadPending(ctx, r.pool, r.cfg.AudioDir, 10); err != nil {
+	if err := DownloadPending(ctx, r.pool, r.cfg.AudioDir, 40); err != nil {
 		log.Printf("ERROR ingest: download: %v", err)
 	}
 	if err := TranscribePending(ctx, r.pool, r.cfg.WorkerURL, r.cfg.RawDir, 5); err != nil {

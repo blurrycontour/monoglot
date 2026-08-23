@@ -238,36 +238,20 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
 
     Scaffold(
         topBar = {
-            // A compact bar: the large variant spent nearly a quarter of the
-            // screen on one word.
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        AppMark(Modifier.size(22.dp))
-                        Spacer(Modifier.width(9.dp))
-                        Text("Lyssna", fontWeight = FontWeight.SemiBold)
+            MonoglotTopBar(title = "Listen") {
+                BadgedBox(
+                    badge = {
+                        if (state.filter != LibraryFilter.ALL) Badge(Modifier.size(7.dp))
                     }
-                },
-                actions = {
-                    BadgedBox(
-                        badge = {
-                            if (state.filter != LibraryFilter.ALL) {
-                                Badge(Modifier.size(7.dp))
-                            }
-                        }
-                    ) {
-                        IconButton(onClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            filterSheet = true
-                        }) {
-                            Icon(Icons.Default.FilterList, contentDescription = "Filter episodes")
-                        }
+                ) {
+                    IconButton(onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        filterSheet = true
+                    }) {
+                        Icon(Icons.Default.FilterList, contentDescription = "Filter episodes")
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                ),
-            )
+                }
+            }
         },
         containerColor = Color.Transparent,
     ) { padding ->

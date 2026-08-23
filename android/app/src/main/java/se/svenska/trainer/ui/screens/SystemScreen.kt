@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -111,7 +112,10 @@ fun SystemScreen() {
     }
 
     Scaffold(
-        topBar = { LargeTopAppBar(title = { Text("System", fontWeight = FontWeight.SemiBold) }) },
+        // Transparent so the theme's background art shows through; the default
+        // paints an opaque surface over it.
+        containerColor = Color.Transparent,
+        topBar = { MonoglotTopBar(title = "System") },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         if (state.loading) {
