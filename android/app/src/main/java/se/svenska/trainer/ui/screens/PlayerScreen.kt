@@ -72,7 +72,14 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
             )
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        // Only the top inset here: the controls apply the navigation bar inset
+        // themselves, and applying it in both places left a band of empty
+        // surface under the transport row.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(top = padding.calculateTopPadding())
+        ) {
             when {
                 state.loading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                     CircularProgressIndicator()
@@ -106,6 +113,7 @@ private fun TranscriptArea(vm: PlayerViewModel, state: se.svenska.trainer.player
     val idx = vm.tokenIndex() ?: return
     when (state.transcriptMode) {
         TranscriptMode.HIDDEN -> HiddenView(state.isPlaying)
+        TranscriptMode.LINE -> LineView(vm, state)
         TranscriptMode.REVEAL -> RevealView(vm, state)
         TranscriptMode.FULL -> FullView(vm, state)
     }
@@ -143,6 +151,37 @@ private fun HiddenView(isPlaying: Boolean) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+/**
+ * The sentence playing now, always on screen, and nothing else. Unlike REVEAL
+ * this needs no interaction, and unlike FULL it will not let the eye run ahead
+ * of the audio.
+ */
+@Composable
+private fun LineView(vm: PlayerViewModel, state: se.svenska.trainer.player.PlayerState) {
+    val idx = vm.tokenIndex() ?: return
+    val tokens = idx.tokensInSegment(state.activeSegmentIdx)
+
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 26.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (tokens.isEmpty()) {
+            Text(
+                "…",
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            SentenceText(
+                tokens = tokens,
+                activeTokenId = idx.tokens.getOrNull(state.activeTokenIdx)?.id,
+                onWordTap = { vm.onWordTapped(it) },
+            )
+        }
     }
 }
 

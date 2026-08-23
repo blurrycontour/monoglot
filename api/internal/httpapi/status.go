@@ -10,6 +10,7 @@ type PipelineStatus struct {
 	Ready         int            `json:"ready"`
 	Processing    int            `json:"processing"`
 	Failed        int            `json:"failed"`
+	Archived      int            `json:"archived"`
 	IngestRunning bool           `json:"ingest_running"`
 }
 
@@ -36,6 +37,11 @@ func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
 			out.Ready = n
 		case "failed":
 			out.Failed = n
+		case "archived":
+			// Deliberately deferred, not in flight. Counting these as
+			// processing made a 175-episode archive read as "preparing 189
+			// episodes" forever.
+			out.Archived = n
 		default:
 			// new, downloading, downloaded, transcribing: all still in flight.
 			out.Processing += n

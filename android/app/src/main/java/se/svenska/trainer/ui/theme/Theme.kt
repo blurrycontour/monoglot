@@ -109,9 +109,22 @@ fun MonoglotTheme(
 }
 
 /**
- * Background ornament. Every treatment is deliberately low-contrast: this sits
- * behind a transcript that has to stay readable, so it may add character but
- * never compete for attention.
+ * A small deterministic PRNG. Ornaments must not reshuffle on every
+ * recomposition, so the scatter is seeded rather than random.
+ */
+private class Scatter(private var seed: Int) {
+    fun next(): Float {
+        seed = seed * 1103515245 + 12345
+        return ((seed ushr 16) and 0x7FFF) / 32767f
+    }
+    fun range(a: Float, b: Float) = a + next() * (b - a)
+}
+
+/**
+ * Background ornament. Low-contrast, because this sits behind a transcript
+ * that has to stay readable, but dense enough to actually read as art: list
+ * cards are opaque and cover most of the canvas, so a handful of large shapes
+ * is nearly invisible in practice.
  */
 private fun Modifier.themeOrnament(
     theme: AppTheme,
@@ -124,13 +137,27 @@ private fun Modifier.themeOrnament(
     // Fine speckle, like paper stock.
     Ornament.PAPER_GRAIN -> drawBehind {
         val ink = Color(0xFF6B5B3E)
-        var seed = 12345
-        repeat(1400) {
-            seed = seed * 1103515245 + 12345
-            val x = ((seed ushr 16) % size.width.toInt().coerceAtLeast(1)).toFloat()
-            seed = seed * 1103515245 + 12345
-            val y = ((seed ushr 16) % size.height.toInt().coerceAtLeast(1)).toFloat()
-            drawCircle(ink.copy(alpha = 0.035f), radius = 0.9f, center = Offset(x, y))
+        val rng = Scatter(12345)
+        repeat(2600) {
+            drawCircle(
+                ink.copy(alpha = rng.range(0.02f, 0.06f)),
+                radius = rng.range(0.6f, 1.3f),
+                center = Offset(rng.next() * size.width, rng.next() * size.height),
+            )
+        }
+        // Short fibres, as in real paper stock.
+        repeat(90) {
+            val x = rng.next() * size.width
+            val y = rng.next() * size.height
+            val len = rng.range(6f, 22f)
+            val ang = rng.range(0f, 360f)
+            rotate(ang, Offset(x, y)) {
+                drawLine(
+                    ink.copy(alpha = 0.05f),
+                    Offset(x - len / 2f, y), Offset(x + len / 2f, y),
+                    strokeWidth = 0.9f,
+                )
+            }
         }
     }
 
@@ -138,11 +165,28 @@ private fun Modifier.themeOrnament(
     Ornament.SOFT_WASH -> drawBehind {
         drawRect(
             brush = Brush.radialGradient(
-                colors = listOf(primary.copy(alpha = 0.12f), Color.Transparent),
+                colors = listOf(primary.copy(alpha = 0.14f), Color.Transparent),
                 center = Offset(size.width * 0.1f, size.height * 0.05f),
                 radius = size.width * 0.9f,
             )
         )
+        drawRect(
+            brush = Brush.radialGradient(
+                colors = listOf(secondary.copy(alpha = 0.10f), Color.Transparent),
+                center = Offset(size.width * 0.95f, size.height * 0.85f),
+                radius = size.width * 0.8f,
+            )
+        )
+        // Outlined circles drifting across, like light through water.
+        val rng = Scatter(4242)
+        repeat(22) {
+            drawCircle(
+                color = primary.copy(alpha = rng.range(0.05f, 0.11f)),
+                radius = size.width * rng.range(0.02f, 0.10f),
+                center = Offset(rng.next() * size.width, rng.next() * size.height),
+                style = Stroke(width = 1.4f),
+            )
+        }
     }
 
     // Two overlapping bands, loosely northern-lights shaped.
@@ -173,25 +217,38 @@ private fun Modifier.themeOrnament(
 
         // Night sky: a deterministic star field, so it does not shimmer on
         // every recomposition, plus two ringed planets.
-        var seed = 987654321
-        fun rnd(): Float {
-            seed = seed * 1103515245 + 12345
-            return ((seed ushr 16) and 0x7FFF) / 32767f
+        val rng = Scatter(987654321)
+        repeat(260) {
+            val x = rng.next() * size.width
+            val y = rng.next() * size.height
+            val r = rng.range(0.6f, 2.3f)
+            drawCircle(
+                Color.White.copy(alpha = rng.range(0.06f, 0.22f)),
+                radius = r,
+                center = Offset(x, y),
+            )
         }
-        repeat(90) {
-            val x = rnd() * size.width
-            val y = rnd() * size.height
-            val r = 0.7f + rnd() * 1.5f
-            drawCircle(Color.White.copy(alpha = 0.05f + rnd() * 0.09f), radius = r, center = Offset(x, y))
-        }
-        // A few brighter stars with cross flare.
-        listOf(0.18f to 0.28f, 0.77f to 0.12f, 0.62f to 0.71f).forEach { (fx, fy) ->
+        // Brighter stars with a cross flare, scattered down the whole page.
+        val bright = List(9) { Pair(rng.next(), rng.next()) }
+        bright.forEach { (fx, fy) ->
             val c = Offset(size.width * fx, size.height * fy)
-            drawCircle(Color.White.copy(alpha = 0.20f), radius = 1.7f, center = c)
-            drawLine(Color.White.copy(alpha = 0.10f),
-                Offset(c.x - 7f, c.y), Offset(c.x + 7f, c.y), strokeWidth = 1f)
-            drawLine(Color.White.copy(alpha = 0.10f),
-                Offset(c.x, c.y - 7f), Offset(c.x, c.y + 7f), strokeWidth = 1f)
+            drawCircle(Color.White.copy(alpha = 0.30f), radius = 2.1f, center = c)
+            drawLine(Color.White.copy(alpha = 0.16f),
+                Offset(c.x - 9f, c.y), Offset(c.x + 9f, c.y), strokeWidth = 1f)
+            drawLine(Color.White.copy(alpha = 0.16f),
+                Offset(c.x, c.y - 9f), Offset(c.x, c.y + 9f), strokeWidth = 1f)
+        }
+        // A second, smaller planet lower down so the sky is not top-heavy.
+        val p2 = Offset(size.width * 0.20f, size.height * 0.62f)
+        val r2 = size.width * 0.045f
+        drawCircle(secondary.copy(alpha = 0.10f), radius = r2, center = p2)
+        rotate(14f, p2) {
+            drawOval(
+                color = secondary.copy(alpha = 0.10f),
+                topLeft = Offset(p2.x - r2 * 1.9f, p2.y - r2 * 0.26f),
+                size = androidx.compose.ui.geometry.Size(r2 * 3.8f, r2 * 0.52f),
+                style = Stroke(width = 1.6f),
+            )
         }
         // Planet with a tilted ring.
         val pc = Offset(size.width * 0.82f, size.height * 0.20f)
@@ -212,7 +269,7 @@ private fun Modifier.themeOrnament(
             center = Offset(size.width * 0.14f, size.height * 0.86f))
     }
 
-    // Forest: soft canopy shapes plus scattered leaves in the accent colour.
+    // Forest floor: soft canopy shapes with a dense scatter of leaves.
     Ornament.BLOBS -> drawBehind {
         drawCircle(
             primary.copy(alpha = 0.06f),
@@ -225,19 +282,17 @@ private fun Modifier.themeOrnament(
             center = Offset(size.width * 0.05f, size.height * 0.84f),
         )
 
-        // Leaves. Each is two mirrored quadratic curves with a midrib, rotated
-        // by a per-leaf angle so the scatter does not read as a pattern.
-        val leaves = listOf(
-            Triple(0.12f, 0.06f, -22f), Triple(0.84f, 0.30f, 34f),
-            Triple(0.22f, 0.46f, 12f), Triple(0.72f, 0.62f, -48f),
-            Triple(0.10f, 0.74f, 58f), Triple(0.88f, 0.88f, -14f),
-            Triple(0.44f, 0.94f, 26f), Triple(0.60f, 0.16f, -66f),
-        )
-        leaves.forEach { (fx, fy, deg) ->
-            val cx = size.width * fx
-            val cy = size.height * fy
-            val len = size.width * 0.085f
-            val wid = len * 0.46f
+        // Each leaf is two mirrored quadratic curves with a midrib. Scattered
+        // across the whole canvas so some are always visible between cards.
+        val rng = Scatter(20260823)
+        repeat(46) {
+            val cx = rng.range(-0.05f, 1.05f) * size.width
+            val cy = rng.range(-0.02f, 1.02f) * size.height
+            val len = size.width * rng.range(0.045f, 0.105f)
+            val wid = len * rng.range(0.34f, 0.52f)
+            val deg = rng.range(0f, 360f)
+            val tint = if (rng.next() > 0.65f) secondary else primary
+            val alpha = rng.range(0.07f, 0.15f)
             rotate(deg, Offset(cx, cy)) {
                 val leaf = Path().apply {
                     moveTo(cx, cy - len / 2f)
@@ -245,9 +300,9 @@ private fun Modifier.themeOrnament(
                     quadraticTo(cx - wid, cy, cx, cy - len / 2f)
                     close()
                 }
-                drawPath(leaf, primary.copy(alpha = 0.075f))
+                drawPath(leaf, tint.copy(alpha = alpha))
                 drawLine(
-                    color = primary.copy(alpha = 0.11f),
+                    color = tint.copy(alpha = alpha * 1.5f),
                     start = Offset(cx, cy - len / 2f),
                     end = Offset(cx, cy + len / 2f),
                     strokeWidth = 1.1f,
@@ -303,11 +358,22 @@ private fun Modifier.themeOrnament(
         }
         // A single accent margin rule, as on ruled paper.
         drawLine(
-            color = primary.copy(alpha = 0.10f),
+            color = primary.copy(alpha = 0.12f),
             start = Offset(size.width * 0.085f, 0f),
             end = Offset(size.width * 0.085f, size.height),
             strokeWidth = 1.5f,
         )
+        // Scattered marginalia ticks, so the page is ruled rather than striped.
+        val rng = Scatter(777)
+        repeat(34) {
+            val x = rng.range(0.10f, 0.98f) * size.width
+            val y = rng.next() * size.height
+            val len = rng.range(5f, 16f)
+            drawLine(
+                primary.copy(alpha = rng.range(0.05f, 0.12f)),
+                Offset(x, y), Offset(x + len, y), strokeWidth = 1.4f,
+            )
+        }
     }
 }
 

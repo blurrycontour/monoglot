@@ -142,12 +142,14 @@ fun Controls(vm: PlayerViewModel, state: PlayerState) {
 
 private fun TranscriptMode.shortLabel() = when (this) {
     TranscriptMode.HIDDEN -> "Off"
-    TranscriptMode.REVEAL -> "Line"
+    TranscriptMode.LINE -> "Line"
+    TranscriptMode.REVEAL -> "Tap"
     TranscriptMode.FULL -> "All"
 }
 
 private fun TranscriptMode.icon() = when (this) {
     TranscriptMode.HIDDEN -> Icons.Default.VisibilityOff
+    TranscriptMode.LINE -> Icons.Default.Subtitles
     TranscriptMode.REVEAL -> Icons.Default.Visibility
     TranscriptMode.FULL -> Icons.Default.Article
 }
@@ -227,8 +229,12 @@ private fun TranscriptSheet(
 ) {
     val options = listOf(
         Triple(TranscriptMode.HIDDEN, "Hidden", "No text. Listen first."),
-        Triple(TranscriptMode.REVEAL, "Reveal one line", "Show only the sentence playing, on request."),
-        Triple(TranscriptMode.FULL, "Full transcript", "Everything, with the spoken word highlighted."),
+        Triple(TranscriptMode.LINE, "One line, always",
+            "The sentence playing now, always on screen."),
+        Triple(TranscriptMode.REVEAL, "One line, on request",
+            "Blank until you ask, then re-hides when the sentence ends."),
+        Triple(TranscriptMode.FULL, "Full transcript",
+            "Everything, with the spoken word highlighted."),
     )
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.padding(bottom = 30.dp)) {

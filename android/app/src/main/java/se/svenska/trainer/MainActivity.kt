@@ -41,6 +41,11 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import se.svenska.trainer.data.Graph
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import se.svenska.trainer.player.PlaybackHolder
 import se.svenska.trainer.ui.screens.LibraryScreen
 import se.svenska.trainer.ui.screens.MiniPlayerHost
@@ -98,10 +103,12 @@ fun App() {
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
     val now by PlaybackHolder.now.collectAsState()
+    val pagerState = rememberPagerState(pageCount = { TABS.size })
+    val scope = rememberCoroutineScope()
 
     // The player is immersive: it takes the whole screen, with no bottom bar
     // competing with the transport controls.
-    val showBar = route in TABS.map { it.route }
+    val showBar = route == "tabs"
 
     // Reconnect on launch so the mini player reappears if playback survived
     // the activity, which it does: the service outlives the UI.
@@ -130,19 +137,11 @@ fun App() {
                         onExpand = { nav.navigate("player/${now.itemId}") },
                     )
                 NavigationBar {
-                    TABS.forEach { tab ->
-                        val selected = backStack?.destination?.hierarchy
-                            ?.any { it.route == tab.route } == true
+                    TABS.forEachIndexed { index, tab ->
                         NavigationBarItem(
-                            selected = selected,
+                            selected = pagerState.currentPage == index,
                             onClick = {
-                                nav.navigate(tab.route) {
-                                    popUpTo(nav.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
+                                scope.launch { pagerState.animateScrollToPage(index) }
                             },
                             icon = { Icon(tab.icon, contentDescription = tab.label) },
                             label = { Text(tab.label) },
@@ -155,19 +154,19 @@ fun App() {
     ) { padding ->
         NavHost(
             navController = nav,
-            startDestination = "library",
+            startDestination = "tabs",
             modifier = Modifier.padding(
                 bottom = if (showBar) padding.calculateBottomPadding() else 0.dp,
             ),
             enterTransition = { fadeIn(tween(180)) },
             exitTransition = { fadeOut(tween(180)) },
         ) {
-            composable("library") {
-                LibraryScreen(onOpen = { nav.navigate("player/$it") })
+            composable("tabs") {
+                TabPager(
+                    pagerState = pagerState,
+                    onOpenItem = { nav.navigate("player/$it") },
+                )
             }
-            composable("words") { WordsScreen() }
-            composable("system") { SystemScreen() }
-            composable("settings") { SettingsScreen() }
             composable(
                 "player/{itemId}",
                 arguments = listOf(navArgument("itemId") { type = NavType.IntType }),
@@ -179,6 +178,28 @@ fun App() {
                     onBack = { nav.popBackStack() },
                 )
             }
+        }
+    }
+}
+
+/**
+ * The four tabs as swipeable pages. Reaching Settings previously meant three
+ * separate taps with no gesture at all; a pager is what the bottom bar
+ * implies.
+ */
+@Composable
+private fun TabPager(pagerState: PagerState, onOpenItem: (Int) -> Unit) {
+    HorizontalPager(
+        state = pagerState,
+        // Each page keeps its own scroll and view model, so swiping back and
+        // forth does not reset what you were looking at.
+        beyondViewportPageCount = 1,
+    ) { page ->
+        when (TABS[page].route) {
+            "library" -> LibraryScreen(onOpen = onOpenItem)
+            "words" -> WordsScreen()
+            "system" -> SystemScreen()
+            else -> SettingsScreen()
         }
     }
 }

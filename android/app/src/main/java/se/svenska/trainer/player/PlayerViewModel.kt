@@ -180,7 +180,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun cycleTranscriptMode() {
         setTranscriptMode(
             when (_state.value.transcriptMode) {
-                TranscriptMode.HIDDEN -> TranscriptMode.REVEAL
+                TranscriptMode.HIDDEN -> TranscriptMode.LINE
+                TranscriptMode.LINE -> TranscriptMode.REVEAL
                 TranscriptMode.REVEAL -> TranscriptMode.FULL
                 TranscriptMode.FULL -> TranscriptMode.HIDDEN
             }

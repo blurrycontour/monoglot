@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -410,24 +411,27 @@ fun AppMark(modifier: Modifier = Modifier, tint: Color = MaterialTheme.colorSche
 
 @Composable
 private fun SourceFilterRow(state: LibraryState, onSelect: (String?) -> Unit) {
-    val counts = state.sources.associate { it.slug to it.ready }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
+    // Scrolls: with four sources the row overflowed and the last chip wrapped
+    // its label one character per line.
+    val all = state.sources.sumOf { it.ready }
+    LazyRow(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        val all = counts.values.sum()
-        FilterChip(
-            selected = state.sourceFilter == null,
-            onClick = { onSelect(null) },
-            label = { Text("All  $all") },
-        )
-        state.sources.forEach { source ->
+        item {
+            FilterChip(
+                selected = state.sourceFilter == null,
+                onClick = { onSelect(null) },
+                label = { Text("All  $all") },
+            )
+        }
+        items(state.sources.size) { i ->
+            val source = state.sources[i]
             FilterChip(
                 selected = state.sourceFilter == source.slug,
                 onClick = { onSelect(source.slug) },
-                label = { Text("${source.name}  ${source.ready}") },
+                label = { Text("${source.name}  ${source.ready}", maxLines = 1) },
             )
         }
     }
