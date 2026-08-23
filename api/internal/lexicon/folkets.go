@@ -10,7 +10,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"database/sql"
 )
 
 // FolketsURL is the public Swedish->English dump. CC BY-SA 2.5; attribution is
@@ -54,7 +54,7 @@ type folketsWord struct {
 // ImportFolkets parses the Folkets XML into lexemes, and additionally harvests
 // its <paradigm><inflection> lists into forms. Folkets covers ~19k paradigms;
 // SALDO covers far more, but this makes the dictionary useful on its own.
-func ImportFolkets(ctx context.Context, pool *pgxpool.Pool, lang, path string) error {
+func ImportFolkets(ctx context.Context, pool *sql.DB, lang, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -137,7 +137,7 @@ func ImportFolkets(ctx context.Context, pool *pgxpool.Pool, lang, path string) e
 		if err != nil {
 			return err
 		}
-		lexRows = append(lexRows, []any{lang, k.lemma, nullable(k.pos), blob, "folkets"})
+		lexRows = append(lexRows, []any{lang, k.lemma, nullable(k.pos), string(blob), "folkets"})
 	}
 
 	if err := copyLexemes(ctx, pool, lexRows); err != nil {
@@ -159,7 +159,7 @@ func (FolketsProvider) CacheName() string { return "folkets.xml" }
 func (FolketsProvider) Attribution() string {
 	return "Folkets lexikon (KTH/CSC), CC BY-SA 2.5"
 }
-func (FolketsProvider) Import(ctx context.Context, pool *pgxpool.Pool, lang, path string) error {
+func (FolketsProvider) Import(ctx context.Context, pool *sql.DB, lang, path string) error {
 	return ImportFolkets(ctx, pool, lang, path)
 }
 

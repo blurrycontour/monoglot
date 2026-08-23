@@ -1,13 +1,12 @@
 package httpapi
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/adityasingh/svenska/api/internal/lexicon"
 )
@@ -36,7 +35,7 @@ func (s *Server) getBundle(w http.ResponseWriter, r *http.Request) {
 
 	item, err := s.loadItem(r, id)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -76,13 +75,13 @@ func (s *Server) getBundle(w http.ResponseWriter, r *http.Request) {
 // definitionsForItem resolves every distinct normalized token in the item to
 // its candidate lemmas and their definitions, in a single round trip.
 func (s *Server) definitionsForItem(r *http.Request, id int) (map[string][]lexicon.Candidate, error) {
-	rows, err := s.pool.Query(r.Context(), `
+	rows, err := s.pool.QueryContext(r.Context(), `
 		WITH lang AS (
 		  SELECT s.language_code AS code FROM items i
-		  JOIN sources s ON s.id = i.source_id WHERE i.id = $1
+		  JOIN sources s ON s.id = i.source_id WHERE i.id = ?
 		), item_forms AS (
 		  SELECT DISTINCT normalized FROM tokens
-		  WHERE item_id = $1 AND is_word AND normalized <> ''
+		  WHERE item_id = ? AND is_word AND normalized <> ''
 		)
 		SELECT f.normalized, l.lemma, COALESCE(l.pos,''), l.origin, l.definitions
 		FROM item_forms f
@@ -94,7 +93,7 @@ func (s *Server) definitionsForItem(r *http.Request, id int) (map[string][]lexic
 		FROM item_forms f
 		CROSS JOIN lang
 		JOIN lexemes l ON l.lemma = f.normalized AND l.language_code = lang.code
-		ORDER BY 1, 2, 3`, id)
+		ORDER BY 1, 2, 3`, id, id)
 	if err != nil {
 		return nil, err
 	}

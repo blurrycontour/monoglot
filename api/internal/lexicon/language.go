@@ -3,7 +3,7 @@ package lexicon
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"database/sql"
 )
 
 // DefaultLanguage is used wherever the caller has no better information. The
@@ -30,7 +30,7 @@ type DictionaryProvider interface {
 	CacheName() string
 	// Import parses the dataset at path into lexemes (and any inflections it
 	// happens to carry) for the given language.
-	Import(ctx context.Context, pool *pgxpool.Pool, lang, path string) error
+	Import(ctx context.Context, pool *sql.DB, lang, path string) error
 	// Attribution is the licence credit that must be displayed.
 	Attribution() string
 }
@@ -39,7 +39,7 @@ type DictionaryProvider interface {
 type MorphologyProvider interface {
 	SourceURL() string
 	CacheName() string
-	Import(ctx context.Context, pool *pgxpool.Pool, lang, path string) error
+	Import(ctx context.Context, pool *sql.DB, lang, path string) error
 	Attribution() string
 }
 
@@ -64,8 +64,8 @@ func Morphology(lang string) (MorphologyProvider, bool) {
 }
 
 // Languages lists what the instance is configured for.
-func Languages(ctx context.Context, pool *pgxpool.Pool) ([]Language, error) {
-	rows, err := pool.Query(ctx,
+func Languages(ctx context.Context, pool *sql.DB) ([]Language, error) {
+	rows, err := pool.QueryContext(ctx,
 		`SELECT code, name, COALESCE(native_name,''), asr_code, enabled
 		 FROM languages ORDER BY code`)
 	if err != nil {
@@ -84,14 +84,14 @@ func Languages(ctx context.Context, pool *pgxpool.Pool) ([]Language, error) {
 }
 
 // ASRCode returns the transcription language hint for a content item.
-func ASRCode(ctx context.Context, pool *pgxpool.Pool, itemID int) string {
+func ASRCode(ctx context.Context, pool *sql.DB, itemID int) string {
 	var code string
-	err := pool.QueryRow(ctx, `
+	err := pool.QueryRowContext(ctx, `
 		SELECT l.asr_code
 		FROM items i
 		JOIN sources s ON s.id = i.source_id
 		JOIN languages l ON l.code = s.language_code
-		WHERE i.id = $1`, itemID).Scan(&code)
+		WHERE i.id = ?`, itemID).Scan(&code)
 	if err != nil || code == "" {
 		return DefaultLanguage
 	}

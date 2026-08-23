@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"database/sql"
 
 	"github.com/adityasingh/svenska/api/internal/config"
 	"github.com/adityasingh/svenska/api/internal/db"
@@ -53,12 +53,17 @@ func main() {
 		if !ok {
 			log.Fatalf("import-dictionary: no dictionary provider registered for %q", lang)
 		}
-		if alreadyImported(ctx, pool, "lexemes", "language_code = '"+lang+"' AND origin = 'folkets'") {
+		if importDone(ctx, pool, "dictionary", lang) {
 			return
 		}
 		path := mustFetch(ctx, p.SourceURL(), p.CacheName(), localPath(2))
 		if err := p.Import(ctx, pool, lang, path); err != nil {
 			log.Fatalf("import-dictionary: %v", err)
+		}
+		markImported(ctx, pool, "dictionary", lang, countRows(ctx, pool, "lexemes"))
+		log.Println("refreshing query statistics")
+		if err := db.Analyze(ctx, pool); err != nil {
+			log.Printf("WARNING analyze: %v", err)
 		}
 	case "import-morphology":
 		pool := mustConnect(ctx, cfg)
@@ -68,12 +73,17 @@ func main() {
 		if !ok {
 			log.Fatalf("import-morphology: no morphology provider registered for %q", lang)
 		}
-		if alreadyImported(ctx, pool, "forms", "language_code = '"+lang+"'") {
+		if importDone(ctx, pool, "morphology", lang) {
 			return
 		}
 		path := mustFetch(ctx, p.SourceURL(), p.CacheName(), localPath(2))
 		if err := p.Import(ctx, pool, lang, path); err != nil {
 			log.Fatalf("import-morphology: %v", err)
+		}
+		markImported(ctx, pool, "morphology", lang, countRows(ctx, pool, "forms"))
+		log.Println("refreshing query statistics")
+		if err := db.Analyze(ctx, pool); err != nil {
+			log.Printf("WARNING analyze: %v", err)
 		}
 	case "ingest":
 		// Optional stage argument runs just one step of the state machine,
@@ -99,6 +109,24 @@ func main() {
 		default:
 			log.Fatalf("ingest: unknown stage %q (discover|download|transcribe|all)", argAt(2))
 		}
+	case "import-postgres":
+		// One-shot migration off Postgres. Idempotent, so a partial run can be
+		// repeated safely.
+		pgURL := argAt(2)
+		if pgURL == "" {
+			pgURL = os.Getenv("PG_URL")
+		}
+		if pgURL == "" {
+			log.Fatal("import-postgres: pass the Postgres URL as an argument or set PG_URL")
+		}
+		conn := mustConnect(ctx, cfg)
+		defer conn.Close()
+		if err := db.Migrate(ctx, conn); err != nil {
+			log.Fatalf("migrate: %v", err)
+		}
+		if err := importFromPostgres(ctx, conn, pgURL); err != nil {
+			log.Fatalf("import-postgres: %v", err)
+		}
 	case "find-program":
 		// Diagnostic for the case the spec says to ask about: if the Klartext
 		// program id ever stops resolving, this shows what SR actually has.
@@ -117,33 +145,50 @@ func main() {
 			fmt.Printf("%d\t%s\n", p.ID, p.Name)
 		}
 	default:
-		log.Fatalf("unknown command %q (serve|migrate|import-dictionary|import-morphology|ingest|find-program)", cmd)
+		log.Fatalf("unknown command %q (serve|migrate|import-dictionary|import-morphology|ingest|import-postgres|find-program)", cmd)
 	}
 }
 
-// alreadyImported reports whether a bootstrap import can be skipped. Both
-// imports are row-level idempotent, but re-running them still costs a 250MB
-// download on a fresh checkout plus a full re-parse and 1.7M redundant upserts.
-// Pass --force to reimport anyway (after a dataset update, say).
-func alreadyImported(ctx context.Context, pool *pgxpool.Pool, table, where string) bool {
+// importDone reports whether a bootstrap import has already completed.
+//
+// Tracked explicitly rather than inferred from row counts: Folkets writes to
+// both lexemes and forms, so counting forms cannot distinguish "SALDO has been
+// imported" from "the dictionary contributed some inflections".
+// Pass --force to reimport, after a dataset update say.
+func importDone(ctx context.Context, conn *sql.DB, kind, lang string) bool {
 	if hasFlag("--force") {
-		log.Printf("%s: --force given, reimporting", table)
+		log.Printf("%s: --force given, reimporting", kind)
 		return false
-	}
-	q := "SELECT count(*) FROM " + table
-	if where != "" {
-		q += " WHERE " + where
 	}
 	var n int
-	if err := pool.QueryRow(ctx, q).Scan(&n); err != nil {
-		// Cannot tell: do the work rather than silently skip it.
+	err := conn.QueryRowContext(ctx,
+		`SELECT row_count FROM imports WHERE kind = ? AND language_code = ?`,
+		kind, lang).Scan(&n)
+	if err != nil || n == 0 {
 		return false
 	}
-	if n == 0 {
-		return false
-	}
-	log.Printf("%s already populated (%d rows), skipping import. Use --force to reimport.", table, n)
+	log.Printf("%s already imported for %s (%d rows), skipping. Use --force to reimport.",
+		kind, lang, n)
 	return true
+}
+
+func markImported(ctx context.Context, conn *sql.DB, kind, lang string, rows int) {
+	if _, err := conn.ExecContext(ctx, `
+		INSERT INTO imports (kind, language_code, row_count)
+		VALUES (?,?,?)
+		ON CONFLICT (kind, language_code) DO UPDATE SET
+		  row_count = excluded.row_count,
+		  completed_at = strftime('%Y-%m-%d %H:%M:%S','now')`,
+		kind, lang, rows); err != nil {
+		log.Printf("WARNING recording %s import: %v", kind, err)
+	}
+}
+
+func countRows(ctx context.Context, conn *sql.DB, table string) int {
+	var n int
+	// table is a constant at every call site, never user input.
+	conn.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&n)
+	return n
 }
 
 func hasFlag(name string) bool {
@@ -185,9 +230,7 @@ func serve(ctx context.Context, cfg config.Config) {
 	pool := mustConnect(ctx, cfg)
 	defer pool.Close()
 
-	if err := db.Migrate(ctx, pool); err != nil {
-		log.Fatalf("migrate: %v", err)
-	}
+	db.EnsureStats(ctx, pool)
 	if cfg.AuthToken == "" || cfg.AuthToken == "changeme-run-openssl-rand-hex-32" {
 		log.Println("WARNING: AUTH_TOKEN is unset or default. Set it before using this on the network.")
 	}
@@ -227,20 +270,20 @@ func serve(ctx context.Context, cfg config.Config) {
 	}
 }
 
-func mustConnect(ctx context.Context, cfg config.Config) *pgxpool.Pool {
-	// Postgres may still be starting when this container comes up; retry
-	// briefly rather than crash-looping the whole compose stack.
-	var lastErr error
-	for i := 0; i < 30; i++ {
-		pool, err := db.Connect(ctx, cfg.DatabaseURL)
-		if err == nil {
-			return pool
-		}
-		lastErr = err
-		time.Sleep(time.Second)
+// mustConnect opens the database and brings the schema up to date.
+//
+// Migrations run here rather than only in serve: any command may be the first
+// thing a fresh install runs, and an import against a schemaless database
+// fails with a confusing "no such table".
+func mustConnect(ctx context.Context, cfg config.Config) *sql.DB {
+	conn, err := db.Connect(ctx, cfg.DatabasePath)
+	if err != nil {
+		log.Fatalf("db: could not open %s: %v", cfg.DatabasePath, err)
 	}
-	log.Fatalf("db: could not connect: %v", lastErr)
-	return nil
+	if err := db.Migrate(ctx, conn); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
+	return conn
 }
 
 // mustFetch returns a local path for url, downloading it to the cache dir

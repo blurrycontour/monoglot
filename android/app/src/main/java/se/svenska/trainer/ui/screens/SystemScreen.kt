@@ -173,7 +173,14 @@ fun SystemScreen() {
                     StatRow("Database", formatBytesShort(sys.storage.databaseBytes))
                     StatRow("App package", formatBytesShort(sys.storage.apkBytes))
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    StatRow("Free on disk", formatBytesShort(sys.storage.diskFree), emphasise = true)
+                    // The sum, so the figure that matters is not left to be
+                    // added up from five rows.
+                    StatRow(
+                        "Total used",
+                        formatBytesShort(sys.storage.totalBytes + sys.storage.databaseBytes),
+                        emphasise = true,
+                    )
+                    StatRow("Free on disk", formatBytesShort(sys.storage.diskFree))
 
                     Spacer(Modifier.height(12.dp))
                     OutlinedButton(

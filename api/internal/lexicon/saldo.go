@@ -9,8 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"database/sql"
 )
 
 // SaldoURL is the downloadable saldom dataset. The SALDO *web service* was shut
@@ -26,7 +25,7 @@ const SaldoURL = "https://svn.spraakbanken.gu.se/sb-arkiv/pub/lmf/saldom/saldom.
 // balloon the table and are pure noise for tap-to-define, which only ever
 // looks up a single tapped token: "gick" should offer "ga", not also
 // "ga av stapeln", "ga bet", "ga bort" and forty other idioms.
-func ImportSaldo(ctx context.Context, pool *pgxpool.Pool, lang, path string) error {
+func ImportSaldo(ctx context.Context, pool *sql.DB, lang, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -121,7 +120,7 @@ func (SaldoProvider) CacheName() string { return "saldom.xml" }
 func (SaldoProvider) Attribution() string {
 	return "SALDO, Språkbanken, University of Gothenburg, CC BY-SA 2.5"
 }
-func (SaldoProvider) Import(ctx context.Context, pool *pgxpool.Pool, lang, path string) error {
+func (SaldoProvider) Import(ctx context.Context, pool *sql.DB, lang, path string) error {
 	return ImportSaldo(ctx, pool, lang, path)
 }
 
@@ -144,70 +143,64 @@ func attr(el xml.StartElement, name string) string {
 	return ""
 }
 
-// CopyForms bulk-loads rows of (form, lemma, pos) idempotently. pgx CopyFrom is
-// far faster than INSERT for a dataset this size but cannot express ON CONFLICT,
-// so stage into an unlogged temp table and merge from there.
-func CopyForms(ctx context.Context, pool *pgxpool.Pool, rows [][]any) error {
+// CopyForms bulk-loads rows of (lang, form, lemma, pos) idempotently.
+//
+// SQLite has no COPY, so this is a prepared statement reused inside one
+// transaction. That is the important part: a commit per row would take minutes
+// for SALDO's 1.6M rows, while a single transaction takes seconds.
+func CopyForms(ctx context.Context, conn *sql.DB, rows [][]any) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	// Must run inside an explicit transaction: outside one, every statement
-	// commits on its own and an ON COMMIT DROP temp table would vanish before
-	// the merge could see it.
-	tx, err := pool.Begin(ctx)
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback() //nolint:errcheck
 
-	if _, err := tx.Exec(ctx, `CREATE TEMP TABLE forms_stage
-		(language_code TEXT, form TEXT, lemma TEXT, pos TEXT) ON COMMIT DROP`); err != nil {
-		return err
-	}
-	if _, err := tx.CopyFrom(ctx,
-		pgx.Identifier{"forms_stage"},
-		[]string{"language_code", "form", "lemma", "pos"},
-		pgx.CopyFromRows(rows),
-	); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `
+	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO forms (language_code, form, lemma, pos)
-		SELECT DISTINCT language_code, form, lemma, pos FROM forms_stage
-		ON CONFLICT DO NOTHING`); err != nil {
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT DO NOTHING`)
+	if err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	defer stmt.Close()
+
+	for _, r := range rows {
+		if _, err := stmt.ExecContext(ctx, r...); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
-func copyLexemes(ctx context.Context, pool *pgxpool.Pool, rows [][]any) error {
+func copyLexemes(ctx context.Context, conn *sql.DB, rows [][]any) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	tx, err := pool.Begin(ctx)
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback() //nolint:errcheck
 
-	if _, err := tx.Exec(ctx, `CREATE TEMP TABLE lexemes_stage
-		(language_code TEXT, lemma TEXT, pos TEXT, definitions JSONB, origin TEXT)
-		ON COMMIT DROP`); err != nil {
-		return err
-	}
-	if _, err := tx.CopyFrom(ctx,
-		pgx.Identifier{"lexemes_stage"},
-		[]string{"language_code", "lemma", "pos", "definitions", "origin"},
-		pgx.CopyFromRows(rows),
-	); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `
+	// The conflict target has to name the same expressions as the unique
+	// index, COALESCE included, or SQLite will not match it.
+	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO lexemes (language_code, lemma, pos, definitions, origin)
-		SELECT language_code, lemma, pos, definitions, origin FROM lexemes_stage
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (language_code, lemma, COALESCE(pos, ''), origin)
-		DO UPDATE SET definitions = EXCLUDED.definitions`); err != nil {
+		DO UPDATE SET definitions = excluded.definitions`)
+	if err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	defer stmt.Close()
+
+	for _, r := range rows {
+		if _, err := stmt.ExecContext(ctx, r...); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

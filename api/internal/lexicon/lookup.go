@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"database/sql"
 )
 
 // Candidate is one possible reading of a surface form. Swedish is genuinely
@@ -45,7 +45,7 @@ func Normalize(s string) string {
 //  2. the form is inflected -> resolve via forms, then fetch those lemmas
 //
 // Both are covered by one query against the forms/lexemes indexes.
-func Lookup(ctx context.Context, pool *pgxpool.Pool, lang, surface string) (Result, error) {
+func Lookup(ctx context.Context, pool *sql.DB, lang, surface string) (Result, error) {
 	norm := Normalize(surface)
 	if lang == "" {
 		lang = DefaultLanguage
@@ -57,16 +57,16 @@ func Lookup(ctx context.Context, pool *pgxpool.Pool, lang, surface string) (Resu
 
 	// Single round trip: direct hits on lexemes.lemma unioned with hits
 	// reached through the forms table.
-	rows, err := pool.Query(ctx, `
+	rows, err := pool.QueryContext(ctx, `
 		SELECT l.lemma, COALESCE(l.pos,''), l.origin, l.definitions
 		FROM lexemes l
-		WHERE l.language_code = $2 AND l.lemma = $1
+		WHERE l.language_code = ? AND l.lemma = ?
 		UNION
 		SELECT l.lemma, COALESCE(l.pos,''), l.origin, l.definitions
 		FROM forms f
 		JOIN lexemes l ON l.lemma = f.lemma AND l.language_code = f.language_code
-		WHERE f.language_code = $2 AND f.form = $1
-		ORDER BY 1, 2`, norm, lang)
+		WHERE f.language_code = ? AND f.form = ?
+		ORDER BY 1, 2`, lang, norm, lang, norm)
 	if err != nil {
 		return res, err
 	}
@@ -88,11 +88,12 @@ func Lookup(ctx context.Context, pool *pgxpool.Pool, lang, surface string) (Resu
 
 // ResolveLemmas returns the distinct candidate lemmas for a form, without
 // definitions. Used by the ingestion lemmatize stage.
-func ResolveLemmas(ctx context.Context, pool *pgxpool.Pool, lang, norm string) ([]string, error) {
-	rows, err := pool.Query(ctx, `
-		SELECT lemma FROM forms WHERE language_code = $2 AND form = $1
+func ResolveLemmas(ctx context.Context, pool *sql.DB, lang, norm string) ([]string, error) {
+	rows, err := pool.QueryContext(ctx, `
+		SELECT lemma FROM forms WHERE language_code = ? AND form = ?
 		UNION
-		SELECT lemma FROM lexemes WHERE language_code = $2 AND lemma = $1`, norm, lang)
+		SELECT lemma FROM lexemes WHERE language_code = ? AND lemma = ?`,
+		lang, norm, lang, norm)
 	if err != nil {
 		return nil, err
 	}

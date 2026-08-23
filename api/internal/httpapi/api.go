@@ -10,21 +10,21 @@ import (
 	"strings"
 	"time"
 
+	"database/sql"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/adityasingh/svenska/api/internal/config"
 	"github.com/adityasingh/svenska/api/internal/ingest"
 )
 
 type Server struct {
-	pool   *pgxpool.Pool
+	pool   *sql.DB
 	cfg    config.Config
 	runner *ingest.Runner
 }
 
-func NewServer(pool *pgxpool.Pool, cfg config.Config, runner *ingest.Runner) *Server {
+func NewServer(pool *sql.DB, cfg config.Config, runner *ingest.Runner) *Server {
 	return &Server{pool: pool, cfg: cfg, runner: runner}
 }
 
@@ -116,7 +116,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	out := map[string]any{"status": "ok", "time": time.Now().UTC()}
-	if err := s.pool.Ping(ctx); err != nil {
+	if err := s.pool.PingContext(ctx); err != nil {
 		out["status"] = "degraded"
 		out["db"] = err.Error()
 		writeJSON(w, http.StatusServiceUnavailable, out)

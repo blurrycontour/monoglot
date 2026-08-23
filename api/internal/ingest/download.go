@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"database/sql"
 )
 
 // DeferOutOfWindow marks items outside their source's auto-download window as
@@ -23,8 +23,8 @@ import (
 // the audio is not on disk, and it can be fetched on demand". Leaving them as
 // 'new' instead would have the pipeline retry them forever and the app report
 // them as perpetually processing.
-func DeferOutOfWindow(ctx context.Context, pool *pgxpool.Pool) error {
-	tag, err := pool.Exec(ctx, `
+func DeferOutOfWindow(ctx context.Context, pool *sql.DB) error {
+	tag, err := pool.ExecContext(ctx, `
 		WITH ranked AS (
 		  SELECT i.id,
 		         row_number() OVER (
@@ -41,22 +41,23 @@ func DeferOutOfWindow(ctx context.Context, pool *pgxpool.Pool) error {
 	if err != nil {
 		return err
 	}
-	if n := tag.RowsAffected(); n > 0 {
+	n, _ := tag.RowsAffected()
+	if n > 0 {
 		log.Printf("download: deferred %d item(s) outside the auto-download window", n)
 	}
 	return nil
 }
 
 // DownloadPending moves every item in status='new' through to 'downloaded'.
-func DownloadPending(ctx context.Context, pool *pgxpool.Pool, audioDir string, limit int) error {
+func DownloadPending(ctx context.Context, pool *sql.DB, audioDir string, limit int) error {
 	if err := DeferOutOfWindow(ctx, pool); err != nil {
 		return err
 	}
-	rows, err := pool.Query(ctx, `
+	rows, err := pool.QueryContext(ctx, `
 		SELECT id, audio_url FROM items
 		WHERE status = 'new' AND audio_url IS NOT NULL AND audio_url <> ''
 		ORDER BY published_at DESC NULLS LAST
-		LIMIT $1`, limit)
+		LIMIT ?`, limit)
 	if err != nil {
 		return err
 	}
@@ -87,9 +88,9 @@ func DownloadPending(ctx context.Context, pool *pgxpool.Pool, audioDir string, l
 	return nil
 }
 
-func downloadItem(ctx context.Context, pool *pgxpool.Pool, audioDir string, id int, url string) error {
-	if _, err := pool.Exec(ctx,
-		`UPDATE items SET status='downloading', error=NULL WHERE id=$1`, id); err != nil {
+func downloadItem(ctx context.Context, pool *sql.DB, audioDir string, id int, url string) error {
+	if _, err := pool.ExecContext(ctx,
+		`UPDATE items SET status='downloading', error=NULL WHERE id=?`, id); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(audioDir, 0o755); err != nil {
@@ -150,10 +151,10 @@ func downloadItem(ctx context.Context, pool *pgxpool.Pool, audioDir string, id i
 	if durMS > 0 {
 		dur = durMS
 	}
-	_, err = pool.Exec(ctx, `
-		UPDATE items SET status='downloaded', audio_path=$2,
-		       duration_ms=COALESCE($3, duration_ms), error=NULL
-		WHERE id=$1`, id, dest, dur)
+	_, err = pool.ExecContext(ctx, `
+		UPDATE items SET status='downloaded', audio_path=?,
+		       duration_ms=COALESCE(?, duration_ms), error=NULL
+		WHERE id=?`, dest, dur, id)
 	if err != nil {
 		return err
 	}
@@ -193,10 +194,10 @@ func extFor(url string) string {
 	return ".mp3"
 }
 
-func markFailed(ctx context.Context, pool *pgxpool.Pool, id int, cause error) {
-	if _, err := pool.Exec(ctx,
-		`UPDATE items SET status='failed', error=$2 WHERE id=$1`,
-		id, cause.Error()); err != nil {
+func markFailed(ctx context.Context, pool *sql.DB, id int, cause error) {
+	if _, err := pool.ExecContext(ctx,
+		`UPDATE items SET status='failed', error=? WHERE id=?`,
+		cause.Error(), id); err != nil {
 		log.Printf("ERROR marking item %d failed: %v", id, err)
 	}
 }

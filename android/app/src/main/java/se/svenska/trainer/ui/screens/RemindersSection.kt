@@ -1,7 +1,11 @@
 package se.svenska.trainer.ui.screens
 
+import android.text.format.DateFormat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -17,8 +21,6 @@ import se.svenska.trainer.reminders.Reminder
 import se.svenska.trainer.reminders.ReminderScheduler
 import se.svenska.trainer.reminders.ReminderStore
 import se.svenska.trainer.reminders.Repeat
-import java.time.DayOfWeek
-import java.time.LocalDate
 import java.util.UUID
 
 @Composable
@@ -110,106 +112,99 @@ fun RemindersSection() {
     }
 }
 
+/**
+ * Uses Android's own time picker rather than custom steppers: it is the
+ * control people already know, handles 12/24 hour preference, and is reachable
+ * with one gesture instead of up to twelve taps.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ReminderEditor(
     existing: Reminder?,
     onDismiss: () -> Unit,
     onSave: (Reminder) -> Unit,
 ) {
-    var hour by remember { mutableIntStateOf(existing?.hour ?: 19) }
-    var minute by remember { mutableIntStateOf(existing?.minute ?: 0) }
-    var mode by remember {
-        mutableStateOf(if (existing?.repeat is Repeat.EveryNDays) 1 else 0)
-    }
+    val timeState = rememberTimePickerState(
+        initialHour = existing?.hour ?: 19,
+        initialMinute = existing?.minute ?: 0,
+        is24Hour = DateFormat.is24HourFormat(LocalContext.current),
+    )
     var days by remember {
-        mutableStateOf((existing?.repeat as? Repeat.Weekdays)?.days ?: setOf(1, 2, 3, 4, 5))
-    }
-    var interval by remember {
-        mutableIntStateOf((existing?.repeat as? Repeat.EveryNDays)?.n ?: 2)
+        mutableStateOf(existing?.repeat?.days ?: setOf(1, 2, 3, 4, 5))
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (existing == null) "New reminder" else "Edit reminder") },
         text = {
-            Column {
-                Text("Time", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    NumberStepper(hour, 0, 23) { hour = it }
-                    Text(" : ", style = MaterialTheme.typography.titleLarge)
-                    NumberStepper(minute, 0, 55, step = 5) { minute = it }
-                }
-
-                Spacer(Modifier.height(16.dp))
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    listOf("Weekdays", "Interval").forEachIndexed { i, label ->
-                        SegmentedButton(
-                            selected = mode == i,
-                            onClick = { mode = i },
-                            shape = SegmentedButtonDefaults.itemShape(i, 2),
-                        ) { Text(label) }
-                    }
-                }
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                TimePicker(state = timeState)
 
                 Spacer(Modifier.height(12.dp))
-                if (mode == 0) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                        (1..7).forEach { d ->
-                            val on = d in days
-                            FilterChip(
-                                selected = on,
-                                onClick = {
-                                    days = if (on) days - d else days + d
-                                },
-                                label = {
-                                    Text(
-                                        DayOfWeek.of(d).name.take(1),
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
-                                },
-                                modifier = Modifier.size(38.dp),
-                            )
+                Text(
+                    "Repeat on",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.align(Alignment.Start),
+                )
+                Spacer(Modifier.height(8.dp))
+
+                // Evenly divided so the seventh day always has room; a fixed
+                // Row previously clipped Sunday's label to nothing.
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    (1..7).forEach { d ->
+                        val on = d in days
+                        Surface(
+                            onClick = { days = if (on) days - d else days + d },
+                            shape = CircleShape,
+                            color = if (on) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.weight(1f).aspectRatio(1f),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    Reminder.dayInitial(d),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (on) MaterialTheme.colorScheme.onPrimary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
-                    if (days.isEmpty()) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "Pick at least one day.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                } else {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Every ")
-                        NumberStepper(interval, 1, 30) { interval = it }
-                        Text(" day${if (interval == 1) "" else "s"}")
-                    }
-                    Spacer(Modifier.height(6.dp))
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton(onClick = { days = (1..7).toSet() }) { Text("Every day") }
+                    TextButton(onClick = { days = (1..5).toSet() }) { Text("Weekdays") }
+                    TextButton(onClick = { days = setOf(6, 7) }) { Text("Weekends") }
+                }
+
+                if (days.isEmpty()) {
                     Text(
-                        "Counted from today.",
+                        "Pick at least one day.",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MaterialTheme.colorScheme.error,
                     )
                 }
             }
         },
         confirmButton = {
             TextButton(
-                enabled = mode == 1 || days.isNotEmpty(),
+                enabled = days.isNotEmpty(),
                 onClick = {
-                    val repeat = if (mode == 0) {
-                        Repeat.Weekdays(days)
-                    } else {
-                        Repeat.EveryNDays(interval, LocalDate.now().toEpochDay())
-                    }
                     onSave(
                         Reminder(
                             id = existing?.id ?: UUID.randomUUID().toString(),
-                            hour = hour,
-                            minute = minute,
-                            repeat = repeat,
+                            hour = timeState.hour,
+                            minute = timeState.minute,
+                            repeat = Repeat(days),
                             enabled = true,
                             label = existing?.label.orEmpty(),
                         )
@@ -219,23 +214,4 @@ private fun ReminderEditor(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
-}
-
-@Composable
-private fun NumberStepper(value: Int, min: Int, max: Int, step: Int = 1, onChange: (Int) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(
-            onClick = { onChange(if (value - step < min) max else value - step) },
-            modifier = Modifier.size(32.dp),
-        ) { Text("−", style = MaterialTheme.typography.titleMedium) }
-        Text(
-            "%02d".format(value),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-        )
-        IconButton(
-            onClick = { onChange(if (value + step > max) min else value + step) },
-            modifier = Modifier.size(32.dp),
-        ) { Text("+", style = MaterialTheme.typography.titleMedium) }
-    }
 }

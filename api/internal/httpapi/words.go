@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"database/sql"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/adityasingh/svenska/api/internal/db"
 	"github.com/adityasingh/svenska/api/internal/lexicon"
 )
 
@@ -62,18 +65,18 @@ func (s *Server) recordLookup(lang string, itemID, tokenID int, res lexicon.Resu
 	if tokenID > 0 {
 		tokenArg = tokenID
 	}
-	if _, err := s.pool.Exec(ctx,
-		`INSERT INTO lookups (item_id, token_id, lemma) VALUES ($1,$2,$3)`,
+	if _, err := s.pool.ExecContext(ctx,
+		`INSERT INTO lookups (item_id, token_id, lemma) VALUES (?,?,?)`,
 		itemArg, tokenArg, lemma); err != nil {
 		return
 	}
 	// Touch the vocabulary row so the Words screen reflects real usage.
-	s.pool.Exec(ctx, `
+	s.pool.ExecContext(ctx, `
 		INSERT INTO user_words (language_code, lemma, status, lookup_count)
-		VALUES ($2, $1, 'unknown', 1)
+		VALUES (?, ?, 'unknown', 1)
 		ON CONFLICT (language_code, lemma) DO UPDATE SET
 		  lookup_count = user_words.lookup_count + 1,
-		  last_seen = now()`, lemma, lang)
+		  last_seen = strftime('%Y-%m-%d %H:%M:%S','now')`, lang, lemma)
 }
 
 func (s *Server) postWordStatus(w http.ResponseWriter, r *http.Request) {
@@ -100,11 +103,11 @@ func (s *Server) postWordStatus(w http.ResponseWriter, r *http.Request) {
 	if lang == "" {
 		lang = lexicon.DefaultLanguage
 	}
-	_, err := s.pool.Exec(r.Context(), `
-		INSERT INTO user_words (language_code, lemma, status) VALUES ($3,$1,$2)
+	_, err := s.pool.ExecContext(r.Context(), `
+		INSERT INTO user_words (language_code, lemma, status) VALUES (?,?,?)
 		ON CONFLICT (language_code, lemma) DO UPDATE SET
-		  status=EXCLUDED.status, last_seen=now()`,
-		lemma, body.Status, lang)
+		  status=excluded.status, last_seen=strftime('%Y-%m-%d %H:%M:%S','now')`,
+		lang, lemma, body.Status)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -127,22 +130,30 @@ func (s *Server) deleteWords(w http.ResponseWriter, r *http.Request) {
 	}
 	lang := langOr(r)
 
-	var tag any
+	var tag sql.Result
 	var err error
 	var deleted int64
 
 	switch {
 	case len(body.Lemmas) > 0:
-		tag, err = s.pool.Exec(r.Context(),
-			`DELETE FROM user_words WHERE language_code = $1 AND lemma = ANY($2)`,
-			lang, body.Lemmas)
+		// json_each turns a JSON array bound as one parameter into rows, which
+		// avoids building a variadic IN list.
+		blob, mErr := json.Marshal(body.Lemmas)
+		if mErr != nil {
+			badRequest(w, "invalid lemmas")
+			return
+		}
+		tag, err = s.pool.ExecContext(r.Context(),
+			`DELETE FROM user_words
+			 WHERE language_code = ? AND lemma IN (SELECT value FROM json_each(?))`,
+			lang, string(blob))
 	case body.All && body.Status != "":
-		tag, err = s.pool.Exec(r.Context(),
-			`DELETE FROM user_words WHERE language_code = $1 AND status = $2`,
+		tag, err = s.pool.ExecContext(r.Context(),
+			`DELETE FROM user_words WHERE language_code = ? AND status = ?`,
 			lang, body.Status)
 	case body.All:
-		tag, err = s.pool.Exec(r.Context(),
-			`DELETE FROM user_words WHERE language_code = $1`, lang)
+		tag, err = s.pool.ExecContext(r.Context(),
+			`DELETE FROM user_words WHERE language_code = ?`, lang)
 	default:
 		badRequest(w, "provide lemmas, or all with an optional status")
 		return
@@ -151,8 +162,10 @@ func (s *Server) deleteWords(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	if ct, ok := tag.(interface{ RowsAffected() int64 }); ok {
-		deleted = ct.RowsAffected()
+	if tag != nil {
+		if n, aErr := tag.RowsAffected(); aErr == nil {
+			deleted = n
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
 }
@@ -164,8 +177,8 @@ func (s *Server) deleteWord(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "missing lemma")
 		return
 	}
-	if _, err := s.pool.Exec(r.Context(),
-		`DELETE FROM user_words WHERE language_code = $1 AND lemma = $2`,
+	if _, err := s.pool.ExecContext(r.Context(),
+		`DELETE FROM user_words WHERE language_code = ? AND lemma = ?`,
 		langOr(r), lemma); err != nil {
 		serverError(w, err)
 		return
@@ -184,14 +197,14 @@ type WordRow struct {
 
 func (s *Server) listWords(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
-	rows, err := s.pool.Query(r.Context(), `
+	rows, err := s.pool.QueryContext(r.Context(), `
 		SELECT uw.lemma, uw.status, uw.lookup_count, uw.first_seen, uw.last_seen,
 		       COALESCE((SELECT l.definitions FROM lexemes l
 		                 WHERE l.lemma = uw.lemma AND l.language_code = uw.language_code
-		                 ORDER BY l.id LIMIT 1), '[]'::jsonb)
+		                 ORDER BY l.id LIMIT 1), '[]')
 		FROM user_words uw
-		WHERE ($1 = '' OR uw.status = $1) AND uw.language_code = $2
-		ORDER BY uw.last_seen DESC`, status, langOr(r))
+		WHERE (? = '' OR uw.status = ?) AND uw.language_code = ?
+		ORDER BY uw.last_seen DESC`, status, status, langOr(r))
 	if err != nil {
 		serverError(w, err)
 		return
@@ -202,11 +215,13 @@ func (s *Server) listWords(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var wr WordRow
 		var raw []byte
+		var first, last db.NullTime
 		if err := rows.Scan(&wr.Lemma, &wr.Status, &wr.LookupCount,
-			&wr.FirstSeen, &wr.LastSeen, &raw); err != nil {
+			&first, &last, &raw); err != nil {
 			serverError(w, err)
 			return
 		}
+		wr.FirstSeen, wr.LastSeen = first.Time, last.Time
 		unmarshalDefs(raw, &wr.Definitions)
 		out = append(out, wr)
 	}
@@ -225,14 +240,14 @@ func (s *Server) exportAnki(w http.ResponseWriter, r *http.Request) {
 		// Default to what you are actually trying to learn.
 		status = "learning"
 	}
-	rows, err := s.pool.Query(r.Context(), `
+	rows, err := s.pool.QueryContext(r.Context(), `
 		SELECT uw.lemma, uw.status, uw.lookup_count,
 		       COALESCE((SELECT l.definitions FROM lexemes l
 		                 WHERE l.lemma = uw.lemma AND l.language_code = uw.language_code
-		                 ORDER BY l.id LIMIT 1), '[]'::jsonb)
+		                 ORDER BY l.id LIMIT 1), '[]')
 		FROM user_words uw
-		WHERE ($1 = 'all' OR uw.status = $1) AND uw.language_code = $2
-		ORDER BY uw.lookup_count DESC, uw.lemma`, status, langOr(r))
+		WHERE (? = 'all' OR uw.status = ?) AND uw.language_code = ?
+		ORDER BY uw.lookup_count DESC, uw.lemma`, status, status, langOr(r))
 	if err != nil {
 		serverError(w, err)
 		return

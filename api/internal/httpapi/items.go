@@ -1,12 +1,13 @@
 package httpapi
 
 import (
+	"database/sql"
+
 	"errors"
+	"github.com/adityasingh/svenska/api/internal/db"
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type ItemSummary struct {
@@ -35,7 +36,7 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
-	rows, err := s.pool.Query(r.Context(), `
+	rows, err := s.pool.QueryContext(r.Context(), `
 		SELECT i.id, s.slug, s.name, i.title, COALESCE(i.description,''),
 		       i.published_at, COALESCE(i.duration_ms,0), i.status,
 		       COALESCE(p.position_ms,0), COALESCE(p.completed,false),
@@ -43,10 +44,10 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		FROM items i
 		JOIN sources s ON s.id = i.source_id
 		LEFT JOIN progress p ON p.item_id = i.id
-		WHERE ($1 = 'all' OR i.status = $1)
-		  AND ($2 = '' OR s.slug = $2)
+		WHERE (? = 'all' OR i.status = ?)
+		  AND (? = '' OR s.slug = ?)
 		ORDER BY i.published_at DESC NULLS LAST, i.id DESC
-		LIMIT $3 OFFSET $4`, status, source, limit, offset)
+		LIMIT ? OFFSET ?`, status, status, source, source, limit, offset)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -56,12 +57,14 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 	out := []ItemSummary{}
 	for rows.Next() {
 		var it ItemSummary
+		var published db.NullTime
 		if err := rows.Scan(&it.ID, &it.SourceSlug, &it.SourceName, &it.Title,
-			&it.Description, &it.PublishedAt, &it.DurationMS, &it.Status,
+			&it.Description, &published, &it.DurationMS, &it.Status,
 			&it.PositionMS, &it.Completed, &it.ListenCount); err != nil {
 			serverError(w, err)
 			return
 		}
+		it.PublishedAt = published.Ptr()
 		out = append(out, it)
 	}
 	if err := rows.Err(); err != nil {
@@ -99,7 +102,7 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.loadItem(r, id)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -123,7 +126,8 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) loadItem(r *http.Request, id int) (ItemSummary, error) {
 	var it ItemSummary
-	err := s.pool.QueryRow(r.Context(), `
+	var published db.NullTime
+	err := s.pool.QueryRowContext(r.Context(), `
 		SELECT i.id, s.slug, s.name, i.title, COALESCE(i.description,''),
 		       i.published_at, COALESCE(i.duration_ms,0), i.status,
 		       COALESCE(p.position_ms,0), COALESCE(p.completed,false),
@@ -131,16 +135,17 @@ func (s *Server) loadItem(r *http.Request, id int) (ItemSummary, error) {
 		FROM items i
 		JOIN sources s ON s.id = i.source_id
 		LEFT JOIN progress p ON p.item_id = i.id
-		WHERE i.id = $1`, id).Scan(&it.ID, &it.SourceSlug, &it.SourceName,
-		&it.Title, &it.Description, &it.PublishedAt, &it.DurationMS, &it.Status,
+		WHERE i.id = ?`, id).Scan(&it.ID, &it.SourceSlug, &it.SourceName,
+		&it.Title, &it.Description, &published, &it.DurationMS, &it.Status,
 		&it.PositionMS, &it.Completed, &it.ListenCount)
+	it.PublishedAt = published.Ptr()
 	return it, err
 }
 
 func (s *Server) loadSegments(r *http.Request, id int) ([]Seg, error) {
-	rows, err := s.pool.Query(r.Context(), `
+	rows, err := s.pool.QueryContext(r.Context(), `
 		SELECT id, idx, start_ms, end_ms, text FROM segments
-		WHERE item_id=$1 ORDER BY idx`, id)
+		WHERE item_id=? ORDER BY idx`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -157,10 +162,10 @@ func (s *Server) loadSegments(r *http.Request, id int) ([]Seg, error) {
 }
 
 func (s *Server) loadTokens(r *http.Request, id int) ([]Token, error) {
-	rows, err := s.pool.Query(r.Context(), `
+	rows, err := s.pool.QueryContext(r.Context(), `
 		SELECT id, segment_id, idx, surface, normalized, start_ms, end_ms,
 		       is_word, COALESCE(lemma,'')
-		FROM tokens WHERE item_id=$1 ORDER BY idx`, id)
+		FROM tokens WHERE item_id=? ORDER BY idx`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -187,10 +192,10 @@ func (s *Server) getAudio(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var path string
-	err = s.pool.QueryRow(r.Context(),
-		`SELECT COALESCE(audio_path,'') FROM items WHERE id=$1`, id).Scan(&path)
+	err = s.pool.QueryRowContext(r.Context(),
+		`SELECT COALESCE(audio_path,'') FROM items WHERE id=?`, id).Scan(&path)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -220,9 +225,9 @@ func (s *Server) resetProgress(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "bad item id")
 		return
 	}
-	if _, err := s.pool.Exec(r.Context(), `
-		UPDATE progress SET position_ms = 0, completed = false, updated_at = now()
-		WHERE item_id = $1`, id); err != nil {
+	if _, err := s.pool.ExecContext(r.Context(), `
+		UPDATE progress SET position_ms = 0, completed = 0, updated_at = strftime('%Y-%m-%d %H:%M:%S','now')
+		WHERE item_id = ?`, id); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -251,15 +256,15 @@ func (s *Server) postProgress(w http.ResponseWriter, r *http.Request) {
 
 	// listen_count increments only on the transition into completed, so
 	// scrubbing around the end of an item does not inflate it.
-	_, err = s.pool.Exec(r.Context(), `
+	_, err = s.pool.ExecContext(r.Context(), `
 		INSERT INTO progress (item_id, position_ms, completed, listen_count, updated_at)
-		VALUES ($1, $2, $3, CASE WHEN $3 THEN 1 ELSE 0 END, now())
+		VALUES (?, ?, ?, CASE WHEN ? THEN 1 ELSE 0 END, strftime('%Y-%m-%d %H:%M:%S','now'))
 		ON CONFLICT (item_id) DO UPDATE SET
-		  position_ms  = EXCLUDED.position_ms,
-		  completed    = progress.completed OR EXCLUDED.completed,
+		  position_ms  = excluded.position_ms,
+		  completed    = MAX(progress.completed, excluded.completed),
 		  listen_count = progress.listen_count +
-		      CASE WHEN EXCLUDED.completed AND NOT progress.completed THEN 1 ELSE 0 END,
-		  updated_at   = now()`, id, pos, completed)
+		      CASE WHEN excluded.completed = 1 AND progress.completed = 0 THEN 1 ELSE 0 END,
+		  updated_at   = strftime('%Y-%m-%d %H:%M:%S','now')`, id, pos, completed, completed)
 	if err != nil {
 		serverError(w, err)
 		return

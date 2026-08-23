@@ -83,7 +83,8 @@ fun Controls(vm: PlayerViewModel, state: PlayerState) {
                 ) {
                     Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(19.dp))
                     Spacer(Modifier.width(7.dp))
-                    Text("Replay", fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                    Text("Replay line", fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium, maxLines = 1)
                 }
 
                 PillButton(

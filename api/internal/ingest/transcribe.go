@@ -13,8 +13,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"database/sql"
 
 	"github.com/adityasingh/svenska/api/internal/lexicon"
 )
@@ -47,12 +46,12 @@ type TranscriptResponse struct {
 // Idempotent by construction: segments/tokens for the item are deleted before
 // re-insert, and an item already at 'ready' is never picked up, so re-running
 // the pipeline does not re-transcribe finished work.
-func TranscribePending(ctx context.Context, pool *pgxpool.Pool, workerURL, rawDir string, limit int) error {
-	rows, err := pool.Query(ctx, `
+func TranscribePending(ctx context.Context, pool *sql.DB, workerURL, rawDir string, limit int) error {
+	rows, err := pool.QueryContext(ctx, `
 		SELECT id, audio_path FROM items
 		WHERE status = 'downloaded' AND audio_path IS NOT NULL
 		ORDER BY published_at DESC NULLS LAST
-		LIMIT $1`, limit)
+		LIMIT ?`, limit)
 	if err != nil {
 		return err
 	}
@@ -86,13 +85,13 @@ func TranscribePending(ctx context.Context, pool *pgxpool.Pool, workerURL, rawDi
 	return nil
 }
 
-func transcribeItem(ctx context.Context, pool *pgxpool.Pool, workerURL, rawDir string, id int, audioPath string) error {
+func transcribeItem(ctx context.Context, pool *sql.DB, workerURL, rawDir string, id int, audioPath string) error {
 	// The item's language drives both the ASR hint and which dictionary the
 	// lemmatiser consults.
 	lang := itemLanguage(ctx, pool, id)
 	asr := lexicon.ASRCode(ctx, pool, id)
-	if _, err := pool.Exec(ctx,
-		`UPDATE items SET status='transcribing', error=NULL WHERE id=$1`, id); err != nil {
+	if _, err := pool.ExecContext(ctx,
+		`UPDATE items SET status='transcribing', error=NULL WHERE id=?`, id); err != nil {
 		return err
 	}
 
@@ -153,15 +152,15 @@ func callWorker(ctx context.Context, workerURL, audioPath, language string) (*Tr
 
 // persist writes segments and tokens in one transaction, resolving each token's
 // lemma as it goes so the read path never does morphology work.
-func persist(ctx context.Context, pool *pgxpool.Pool, itemID int, lang string, tr *TranscriptResponse) error {
-	tx, err := pool.Begin(ctx)
+func persist(ctx context.Context, pool *sql.DB, itemID int, lang string, tr *TranscriptResponse) error {
+	tx, err := pool.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback() //nolint:errcheck
 
 	// Re-transcribing an item replaces its previous alignment wholesale.
-	if _, err := tx.Exec(ctx, `DELETE FROM segments WHERE item_id=$1`, itemID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM segments WHERE item_id=?`, itemID); err != nil {
 		return err
 	}
 
@@ -174,9 +173,9 @@ func persist(ctx context.Context, pool *pgxpool.Pool, itemID int, lang string, t
 			continue
 		}
 		var segID int
-		err := tx.QueryRow(ctx, `
+		err := tx.QueryRowContext(ctx, `
 			INSERT INTO segments (item_id, idx, start_ms, end_ms, text)
-			VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+			VALUES (?,?,?,?,?) RETURNING id`,
 			itemID, segIdx, toMS(seg.Start), toMS(seg.End), text).Scan(&segID)
 		if err != nil {
 			return err
@@ -200,10 +199,10 @@ func persist(ctx context.Context, pool *pgxpool.Pool, itemID int, lang string, t
 				}
 			}
 
-			_, err := tx.Exec(ctx, `
+			_, err := tx.ExecContext(ctx, `
 				INSERT INTO tokens (item_id, segment_id, idx, surface, normalized,
 				                    start_ms, end_ms, is_word, lemma)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+				VALUES (?,?,?,?,?,?,?,?,?)`,
 				itemID, segID, tokenIdx, surface, norm,
 				toMS(w.Start), toMS(w.End), isWord, lemma)
 			if err != nil {
@@ -213,11 +212,11 @@ func persist(ctx context.Context, pool *pgxpool.Pool, itemID int, lang string, t
 		}
 	}
 
-	if _, err := tx.Exec(ctx,
-		`UPDATE items SET status='ready', error=NULL WHERE id=$1`, itemID); err != nil {
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE items SET status='ready', error=NULL WHERE id=?`, itemID); err != nil {
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return err
 	}
 	log.Printf("persist item %d: %d segments, %d tokens", itemID, len(tr.Segments), tokenIdx)
@@ -228,12 +227,12 @@ func persist(ctx context.Context, pool *pgxpool.Pool, itemID int, lang string, t
 // preserved at lookup time (the API returns every candidate); this field is
 // only a fast path, so prefer an exact self-match and otherwise take the
 // alphabetically first candidate for determinism.
-func resolveLemmaTx(ctx context.Context, tx pgx.Tx, lang, norm string) any {
-	rows, err := tx.Query(ctx, `
-		SELECT lemma FROM forms WHERE language_code = $2 AND form = $1
+func resolveLemmaTx(ctx context.Context, tx *sql.Tx, lang, norm string) any {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT lemma FROM forms WHERE language_code = ? AND form = ?
 		UNION
-		SELECT lemma FROM lexemes WHERE language_code = $2 AND lemma = $1
-		ORDER BY 1`, norm, lang)
+		SELECT lemma FROM lexemes WHERE language_code = ? AND lemma = ?
+		ORDER BY 1`, lang, norm, lang, norm)
 	if err != nil {
 		return nil
 	}
@@ -258,11 +257,11 @@ func resolveLemmaTx(ctx context.Context, tx pgx.Tx, lang, norm string) any {
 }
 
 // itemLanguage returns the language code an item's content is in.
-func itemLanguage(ctx context.Context, pool *pgxpool.Pool, itemID int) string {
+func itemLanguage(ctx context.Context, pool *sql.DB, itemID int) string {
 	var code string
-	err := pool.QueryRow(ctx, `
+	err := pool.QueryRowContext(ctx, `
 		SELECT s.language_code FROM items i
-		JOIN sources s ON s.id = i.source_id WHERE i.id = $1`, itemID).Scan(&code)
+		JOIN sources s ON s.id = i.source_id WHERE i.id = ?`, itemID).Scan(&code)
 	if err != nil || code == "" {
 		return lexicon.DefaultLanguage
 	}

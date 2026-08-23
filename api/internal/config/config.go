@@ -6,13 +6,13 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string
-	Port        string
-	AuthToken   string
-	AudioDir    string
-	RawDir      string
-	WorkerURL   string
-	APKPath     string
+	DatabasePath string
+	Port         string
+	AuthToken    string
+	AudioDir     string
+	RawDir       string
+	WorkerURL    string
+	APKPath      string
 
 	IngestHour    int
 	IngestMinute  int
@@ -25,7 +25,7 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		DatabaseURL:   env("DATABASE_URL", "postgres://svenska:svenska@localhost:5432/svenska?sslmode=disable"),
+		DatabasePath:  env("DATABASE_PATH", "/data/monoglot.db"),
 		Port:          env("API_PORT", "8080"),
 		AuthToken:     env("AUTH_TOKEN", ""),
 		AudioDir:      env("AUDIO_DIR", "/data/audio"),

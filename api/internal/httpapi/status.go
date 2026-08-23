@@ -19,7 +19,7 @@ type PipelineStatus struct {
 }
 
 func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.pool.Query(r.Context(),
+	rows, err := s.pool.QueryContext(r.Context(),
 		`SELECT status, count(*) FROM items GROUP BY status`)
 	if err != nil {
 		serverError(w, err)

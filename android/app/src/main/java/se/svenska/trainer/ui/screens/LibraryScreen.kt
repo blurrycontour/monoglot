@@ -78,6 +78,10 @@ data class LibraryState(
     /** How many items were in flight when this batch started, so progress can
      *  be shown as a fraction rather than a spinner that never moves. */
     val batchTotal: Int = 0,
+    /** Items known to the server but never fetched, revealed by "Show more". */
+    val archived: List<ItemSummary> = emptyList(),
+    val archivedShown: Int = 0,
+    val fetchingIds: Set<Int> = emptySet(),
 )
 
 class LibraryViewModel(app: Application) : AndroidViewModel(app) {
@@ -211,6 +215,33 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Reveals another page of never-fetched items. They are listed but not
+     *  downloaded: fetching one is an explicit choice, because it costs a
+     *  download and a minute of transcription. */
+    fun showMore() {
+        viewModelScope.launch {
+            if (_state.value.archived.isEmpty()) {
+                runCatching { repo.api.archivedItems(_state.value.sourceFilter) }
+                    .onSuccess { _state.value = _state.value.copy(archived = it) }
+            }
+            _state.value = _state.value.copy(
+                archivedShown = (_state.value.archivedShown + 10)
+                    .coerceAtMost(_state.value.archived.size),
+            )
+        }
+    }
+
+    /** Queues a never-fetched item for download and transcription. */
+    fun fetch(item: ItemSummary) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(fetchingIds = _state.value.fetchingIds + item.id)
+            runCatching { repo.api.restoreItem(item.id) }
+            refreshMetaPublic()
+        }
+    }
+
+    suspend fun refreshMetaPublic() = refreshMeta()
+
     fun clearProgress(item: ItemSummary) {
         viewModelScope.launch {
             runCatching { repo.api.resetProgress(item.id) }
@@ -327,6 +358,31 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
                                     onArchive = { vm.archive(item) },
                                     onClearProgress = { confirmClear = item },
                                     modifier = Modifier.animateItem(),
+                                )
+                            }
+                        }
+
+                        val shown = state.archived.take(state.archivedShown)
+                        if (shown.isNotEmpty()) {
+                            stickyHeader(key = "h-notfetched") {
+                                SectionHeader("Not fetched", state.archived.size)
+                            }
+                            items(shown, key = { "a-${it.id}" }) { item ->
+                                ArchivedCard(
+                                    item = item,
+                                    busy = item.id in state.fetchingIds,
+                                    onFetch = { vm.fetch(item) },
+                                    modifier = Modifier.animateItem(),
+                                )
+                            }
+                        }
+
+                        if (state.archivedShown < (state.archived.size.takeIf { it > 0 } ?: Int.MAX_VALUE)) {
+                            item(key = "showmore") {
+                                ShowMoreButton(
+                                    remaining = if (state.archived.isEmpty()) null
+                                                else state.archived.size - state.archivedShown,
+                                    onClick = { vm.showMore() },
                                 )
                             }
                         }
@@ -707,6 +763,68 @@ private fun DownloadButton(downloaded: Boolean, busy: Boolean, onClick: () -> Un
                 color = if (downloaded) MaterialTheme.colorScheme.onPrimaryContainer
                         else MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * An episode the server knows about but has never downloaded. Shown greyed out
+ * with an explicit Fetch action: pulling one costs a download and roughly a
+ * minute of transcription, so it should never happen by accident.
+ */
+@Composable
+private fun ArchivedCard(
+    item: ItemSummary,
+    busy: Boolean,
+    onFetch: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+        ),
+    ) {
+        Row(
+            Modifier.padding(start = 16.dp, end = 10.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    Dates.label(Dates.parse(item.publishedAt)),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    item.title.take(60),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (busy) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            } else {
+                FilledTonalButton(onClick = onFetch, modifier = Modifier.height(36.dp)) {
+                    Icon(Icons.Default.CloudDownload, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Fetch", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShowMoreButton(remaining: Int?, onClick: () -> Unit) {
+    Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+        OutlinedButton(onClick = onClick) {
+            Icon(Icons.Default.ExpandMore, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(if (remaining == null) "Show more" else "Show more  ($remaining)")
         }
     }
 }

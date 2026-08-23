@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/adityasingh/svenska/api/internal/db"
 	"github.com/adityasingh/svenska/api/internal/lexicon"
 )
 
@@ -20,7 +21,7 @@ type SourceRow struct {
 }
 
 func (s *Server) listSources(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.pool.Query(r.Context(), `
+	rows, err := s.pool.QueryContext(r.Context(), `
 		SELECT s.id, s.slug, s.name, s.kind, s.enabled, s.last_fetched,
 		       (SELECT count(*) FROM items i WHERE i.source_id = s.id AND i.status='ready')
 		FROM sources s ORDER BY s.id`)
@@ -32,11 +33,13 @@ func (s *Server) listSources(w http.ResponseWriter, r *http.Request) {
 	out := []SourceRow{}
 	for rows.Next() {
 		var sr SourceRow
+		var fetched db.NullTime
 		if err := rows.Scan(&sr.ID, &sr.Slug, &sr.Name, &sr.Kind,
-			&sr.Enabled, &sr.LastFetched, &sr.ItemCount); err != nil {
+			&sr.Enabled, &fetched, &sr.ItemCount); err != nil {
 			serverError(w, err)
 			return
 		}
+		sr.LastFetched = fetched.Ptr()
 		out = append(out, sr)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sources": out})
@@ -55,8 +58,8 @@ func (s *Server) setSourceEnabled(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err.Error())
 		return
 	}
-	if _, err := s.pool.Exec(r.Context(),
-		`UPDATE sources SET enabled=$2 WHERE id=$1`, id, body.Enabled); err != nil {
+	if _, err := s.pool.ExecContext(r.Context(),
+		`UPDATE sources SET enabled=? WHERE id=?`, body.Enabled, id); err != nil {
 		serverError(w, err)
 		return
 	}

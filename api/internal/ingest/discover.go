@@ -17,9 +17,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"database/sql"
 
+	"github.com/adityasingh/svenska/api/internal/db"
 	"github.com/adityasingh/svenska/api/internal/srclient"
 )
 
@@ -34,8 +34,8 @@ type Source struct {
 
 // Discover fetches each enabled source's feed and inserts new items with
 // status='new', deduping on (source_id, external_id).
-func Discover(ctx context.Context, pool *pgxpool.Pool) error {
-	rows, err := pool.Query(ctx,
+func Discover(ctx context.Context, pool *sql.DB) error {
+	rows, err := pool.QueryContext(ctx,
 		`SELECT id, slug, name, kind, config, enabled FROM sources WHERE enabled ORDER BY id`)
 	if err != nil {
 		return err
@@ -43,10 +43,14 @@ func Discover(ctx context.Context, pool *pgxpool.Pool) error {
 	var sources []Source
 	for rows.Next() {
 		var s Source
-		if err := rows.Scan(&s.ID, &s.Slug, &s.Name, &s.Kind, &s.Config, &s.Enabled); err != nil {
+		// config is TEXT in SQLite; the driver hands back a string, which does
+		// not scan into json.RawMessage directly.
+		var cfg string
+		if err := rows.Scan(&s.ID, &s.Slug, &s.Name, &s.Kind, &cfg, &s.Enabled); err != nil {
 			rows.Close()
 			return err
 		}
+		s.Config = json.RawMessage(cfg)
 		sources = append(sources, s)
 	}
 	rows.Close()
@@ -76,15 +80,15 @@ func Discover(ctx context.Context, pool *pgxpool.Pool) error {
 			continue
 		}
 		log.Printf("discover %s: %d new item(s)", s.Slug, n)
-		if _, err := pool.Exec(ctx,
-			`UPDATE sources SET last_fetched=now() WHERE id=$1`, s.ID); err != nil {
+		if _, err := pool.ExecContext(ctx,
+			`UPDATE sources SET last_fetched=strftime('%Y-%m-%d %H:%M:%S','now') WHERE id=?`, s.ID); err != nil {
 			log.Printf("ERROR discover %s: recording last_fetched: %v", s.Slug, err)
 		}
 	}
 	return firstErr
 }
 
-func discoverSR(ctx context.Context, pool *pgxpool.Pool, s Source) (int, error) {
+func discoverSR(ctx context.Context, pool *sql.DB, s Source) (int, error) {
 	var cfg struct {
 		ProgramID   int    `json:"program_id"`
 		ProgramName string `json:"program_name"`
@@ -121,7 +125,7 @@ func discoverSR(ctx context.Context, pool *pgxpool.Pool, s Source) (int, error) 
 		}
 		var pub any
 		if !e.PublishDateUTC.IsZero() {
-			pub = e.PublishDateUTC.Time
+			pub = db.FormatTime(e.PublishDateUTC.Time)
 		}
 		var durMS any
 		if audio.Duration > 0 {
@@ -154,35 +158,49 @@ func discoverSR(ctx context.Context, pool *pgxpool.Pool, s Source) (int, error) 
 
 // hasItemOnDate reports whether the source already has an item published on
 // the same UTC date. Used only by sources flagged one_per_day.
-func hasItemOnDate(ctx context.Context, pool *pgxpool.Pool, sourceID int, published time.Time) (bool, error) {
+func hasItemOnDate(ctx context.Context, pool *sql.DB, sourceID int, published time.Time) (bool, error) {
 	var exists bool
-	err := pool.QueryRow(ctx, `
+	err := pool.QueryRowContext(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM items
-			WHERE source_id = $1 AND published_at::date = $2::date)`,
-		sourceID, published).Scan(&exists)
+			WHERE source_id = ? AND date(published_at) = date(?))`,
+		sourceID, db.FormatTime(published)).Scan(&exists)
 	return exists, err
 }
 
 // insertItem inserts one item, returning whether it was actually new.
-func insertItem(ctx context.Context, pool *pgxpool.Pool, sourceID int,
+func insertItem(ctx context.Context, pool *sql.DB, sourceID int,
 	externalID, title, desc string, publishedAt any, audioURL string, durationMS any) (bool, error) {
 
 	var id int
-	err := pool.QueryRow(ctx, `
+
+	// Distinguishing a fresh insert from a refresh needs a marker the upsert
+	// can read, so check membership first: cheap, and indexed.
+	var existed bool
+	if err := pool.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM items WHERE source_id=? AND external_id=?)`,
+		sourceID, externalID).Scan(&existed); err != nil {
+		return false, err
+	}
+
+	err := pool.QueryRowContext(ctx, `
 		INSERT INTO items (source_id, external_id, title, description,
 		                   published_at, audio_url, duration_ms, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,'new')
-		ON CONFLICT (source_id, external_id) DO NOTHING
+		VALUES (?,?,?,?,?,?,?,'new')
+		-- Refresh the display fields on conflict so corrections (HTML stripped
+		-- out of Acast descriptions, say) reach items already ingested,
+		-- without disturbing status or the downloaded audio.
+		ON CONFLICT (source_id, external_id) DO UPDATE SET
+		  title = excluded.title,
+		  description = excluded.description
 		RETURNING id`,
 		sourceID, externalID, title, desc, publishedAt, audioURL, durationMS,
 	).Scan(&id)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// ON CONFLICT DO NOTHING returned no row: already have it.
+		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
 		return false, err
 	}
-	return true, nil
+	return !existed, nil
 }

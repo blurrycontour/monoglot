@@ -212,6 +212,19 @@ object PlaybackHolder {
             connect(context) {
                 if (_now.value.active) return@connect
                 scope.launch {
+                    // Show the bar immediately from the local record, then fill
+                    // in details. Waiting for the bundle meant several seconds
+                    // of blank space on every cold start.
+                    val cached = repo.offline.downloads.byId(itemId)
+                    if (cached != null) {
+                        _now.value = _now.value.copy(
+                            itemId = itemId,
+                            title = cached.title,
+                            source = cached.sourceSlug,
+                            durationMs = cached.durationMs,
+                            positionMs = repo.localProgress(itemId),
+                        )
+                    }
                     val bundle = runCatching { repo.bundle(itemId) }.getOrNull() ?: return@launch
                     prepare(
                         context = context,

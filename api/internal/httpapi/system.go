@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/adityasingh/svenska/api/internal/db"
 	"github.com/adityasingh/svenska/api/internal/lexicon"
 )
 
@@ -83,14 +84,14 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	info.Languages = langs
 
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.pool.QueryContext(ctx, `
 		SELECT s.id, s.slug, s.name, s.language_code, s.enabled, s.last_fetched,
 		  count(i.id),
 		  count(i.id) FILTER (WHERE i.status = 'ready'),
 		  count(i.id) FILTER (WHERE i.status IN ('new','downloading','downloaded','transcribing')),
 		  count(i.id) FILTER (WHERE i.status = 'failed'),
-		  count(i.id) FILTER (WHERE p.completed),
-		  count(i.id) FILTER (WHERE p.position_ms > 0 AND NOT COALESCE(p.completed,false)),
+		  count(i.id) FILTER (WHERE p.completed = 1),
+		  count(i.id) FILTER (WHERE p.position_ms > 0 AND COALESCE(p.completed,0) = 0),
 		  count(i.id) FILTER (WHERE i.status = 'archived')
 		FROM sources s
 		LEFT JOIN items i ON i.source_id = s.id
@@ -103,12 +104,14 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	for rows.Next() {
 		var st SourceStats
+		var fetched db.NullTime
 		if err := rows.Scan(&st.ID, &st.Slug, &st.Name, &st.Language, &st.Enabled,
-			&st.LastFetched, &st.Total, &st.Ready, &st.Processing, &st.Failed,
+			&fetched, &st.Total, &st.Ready, &st.Processing, &st.Failed,
 			&st.Completed, &st.Started, &st.Archived); err != nil {
 			serverError(w, err)
 			return
 		}
+		st.LastFetched = fetched.Ptr()
 		info.Sources = append(info.Sources, st)
 		info.Items.Total += st.Total
 		info.Items.Ready += st.Ready
@@ -126,7 +129,7 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 	// Per-source audio footprint, so the System screen can say which source is
 	// actually costing disk.
 	perSource := map[int]int64{}
-	arows, err := s.pool.Query(ctx,
+	arows, err := s.pool.QueryContext(ctx,
 		`SELECT source_id, COALESCE(audio_path,'') FROM items WHERE audio_path IS NOT NULL`)
 	if err == nil {
 		for arows.Next() {
@@ -154,19 +157,18 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 		info.Storage.CacheBytes + info.Storage.APKBytes
 	info.Storage.DiskFree = diskFree(s.cfg.AudioDir)
 
-	s.pool.QueryRow(ctx, `SELECT pg_database_size(current_database())`).
-		Scan(&info.Storage.DatabaseSize)
-	s.pool.QueryRow(ctx, `SELECT count(*) FROM lexemes`).Scan(&info.Lexicon.Lexemes)
-	s.pool.QueryRow(ctx, `SELECT count(*) FROM forms`).Scan(&info.Lexicon.Forms)
-	s.pool.QueryRow(ctx, `
+	info.Storage.DatabaseSize = db.FileSize(s.cfg.DatabasePath)
+	s.pool.QueryRowContext(ctx, `SELECT count(*) FROM lexemes`).Scan(&info.Lexicon.Lexemes)
+	s.pool.QueryRowContext(ctx, `SELECT count(*) FROM forms`).Scan(&info.Lexicon.Forms)
+	s.pool.QueryRowContext(ctx, `
 		SELECT count(*),
 		  count(*) FILTER (WHERE status='known'),
 		  count(*) FILTER (WHERE status='learning'),
 		  count(*) FILTER (WHERE status='unknown')
 		FROM user_words`).Scan(&info.Vocabulary.Total, &info.Vocabulary.Known,
 		&info.Vocabulary.Learning, &info.Vocabulary.Unknown)
-	s.pool.QueryRow(ctx, `SELECT count(*) FROM lookups`).Scan(&info.Vocabulary.Lookups)
-	s.pool.QueryRow(ctx, `SELECT COALESCE(sum(position_ms),0) FROM progress`).
+	s.pool.QueryRowContext(ctx, `SELECT count(*) FROM lookups`).Scan(&info.Vocabulary.Lookups)
+	s.pool.QueryRowContext(ctx, `SELECT COALESCE(sum(position_ms),0) FROM progress`).
 		Scan(&info.ListenedMs)
 
 	writeJSON(w, http.StatusOK, info)
@@ -208,8 +210,8 @@ func (s *Server) archiveItem(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) archive(r *http.Request, id int) error {
 	var path string
-	if err := s.pool.QueryRow(r.Context(),
-		`SELECT COALESCE(audio_path,'') FROM items WHERE id=$1`, id).Scan(&path); err != nil {
+	if err := s.pool.QueryRowContext(r.Context(),
+		`SELECT COALESCE(audio_path,'') FROM items WHERE id=?`, id).Scan(&path); err != nil {
 		return err
 	}
 	if path != "" {
@@ -218,11 +220,11 @@ func (s *Server) archive(r *http.Request, id int) error {
 	os.Remove(filepath.Join(s.cfg.RawDir, strconv.Itoa(id)+".json"))
 
 	// Segments cascade to tokens.
-	if _, err := s.pool.Exec(r.Context(), `DELETE FROM segments WHERE item_id=$1`, id); err != nil {
+	if _, err := s.pool.ExecContext(r.Context(), `DELETE FROM segments WHERE item_id=?`, id); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(r.Context(), `
-		UPDATE items SET status='archived', audio_path=NULL, error=NULL WHERE id=$1`, id)
+	_, err := s.pool.ExecContext(r.Context(), `
+		UPDATE items SET status='archived', audio_path=NULL, error=NULL WHERE id=?`, id)
 	return err
 }
 
@@ -234,8 +236,8 @@ func (s *Server) restoreItem(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "bad item id")
 		return
 	}
-	if _, err := s.pool.Exec(r.Context(),
-		`UPDATE items SET status='new', error=NULL WHERE id=$1`, id); err != nil {
+	if _, err := s.pool.ExecContext(r.Context(),
+		`UPDATE items SET status='new', error=NULL WHERE id=?`, id); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -251,11 +253,11 @@ func (s *Server) cleanup(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "days must be at least 1")
 		return
 	}
-	rows, err := s.pool.Query(r.Context(), `
+	rows, err := s.pool.QueryContext(r.Context(), `
 		SELECT i.id FROM items i
 		LEFT JOIN progress p ON p.item_id = i.id
 		WHERE i.status = 'ready'
-		  AND i.published_at < now() - ($1 || ' days')::interval
+		  AND i.published_at < datetime('now', '-' || ? || ' days')
 		  AND COALESCE(p.position_ms, 0) = 0`, days)
 	if err != nil {
 		serverError(w, err)

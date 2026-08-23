@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"database/sql"
+
+	"github.com/adityasingh/svenska/api/internal/db"
 )
 
 // 8 Sidor: the article feed at /feed/ carries no audio enclosures, and the
@@ -37,7 +40,7 @@ type rssFeed struct {
 	} `xml:"channel"`
 }
 
-func discoverRSS(ctx context.Context, pool *pgxpool.Pool, s Source) (int, error) {
+func discoverRSS(ctx context.Context, pool *sql.DB, s Source) (int, error) {
 	var cfg struct {
 		FeedURL string `json:"feed_url"`
 	}
@@ -83,7 +86,7 @@ func discoverRSS(ctx context.Context, pool *pgxpool.Pool, s Source) (int, error)
 
 		var pub any
 		if t, err := parseRSSTime(it.PubDate); err == nil {
-			pub = t
+			pub = db.FormatTime(t)
 		}
 		var durMS any
 		if ms := parseDuration(it.Duration); ms > 0 {
@@ -91,7 +94,7 @@ func discoverRSS(ctx context.Context, pool *pgxpool.Pool, s Source) (int, error)
 		}
 
 		inserted, err := insertItem(ctx, pool, s.ID, externalID,
-			strings.TrimSpace(it.Title), strings.TrimSpace(it.Description),
+			stripHTML(it.Title), stripHTML(it.Description),
 			pub, it.Enclosure.URL, durMS)
 		if err != nil {
 			return n, err
@@ -104,6 +107,38 @@ func discoverRSS(ctx context.Context, pool *pgxpool.Pool, s Source) (int, error)
 		log.Printf("WARNING discover %s: feed %s had 0 items", s.Slug, cfg.FeedURL)
 	}
 	return n, nil
+}
+
+// stripHTML flattens an RSS description to plain text.
+//
+// Acast feeds put full HTML in <description>, so the app was rendering literal
+// <p> and <a href> tags. Block-level tags become spaces so words do not run
+// together, then entities are decoded.
+func stripHTML(s string) string {
+	if !strings.ContainsAny(s, "<&") {
+		return strings.TrimSpace(s)
+	}
+
+	var b strings.Builder
+	depth := 0
+	for _, r := range s {
+		switch {
+		case r == '<':
+			depth++
+			// A tag boundary is a word boundary.
+			b.WriteRune(' ')
+		case r == '>':
+			if depth > 0 {
+				depth--
+			}
+		case depth == 0:
+			b.WriteRune(r)
+		}
+	}
+
+	out := html.UnescapeString(b.String())
+	// Collapse the whitespace the tag stripping introduced.
+	return strings.Join(strings.Fields(out), " ")
 }
 
 func parseRSSTime(s string) (time.Time, error) {

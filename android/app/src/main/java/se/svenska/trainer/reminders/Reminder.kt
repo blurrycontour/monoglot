@@ -5,23 +5,16 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.time.temporal.ChronoUnit
 
 /**
- * When a reminder repeats.
+ * Which days a reminder fires on. ISO numbering, 1 = Monday .. 7 = Sunday.
  *
- * Two shapes cover what people actually ask for: specific weekdays ("19:00 on
- * Mon, Tue and Fri") and a rolling interval ("15:00 every other day"). A full
- * cron expression would be more general and much worse to configure on a phone.
+ * Any combination of days covers what people actually ask for, including
+ * "every day" (all seven). An interval mode was tried and removed: it could
+ * not express "Mon, Tue and Fri", which is the common case.
  */
 @Serializable
-sealed interface Repeat {
-    @Serializable
-    data class Weekdays(val days: Set<Int>) : Repeat   // ISO 1=Mon .. 7=Sun
-
-    @Serializable
-    data class EveryNDays(val n: Int, val anchorEpochDay: Long) : Repeat
-}
+data class Repeat(val days: Set<Int>)
 
 @Serializable
 data class Reminder(
@@ -39,10 +32,9 @@ data class Reminder(
         if (!enabled) return null
         // Look ahead a bounded window: 8 days covers any weekday set, and an
         // interval of n days needs at most n.
-        val horizon = when (repeat) {
-            is Repeat.Weekdays -> if (repeat.days.isEmpty()) return null else 8
-            is Repeat.EveryNDays -> repeat.n.coerceIn(1, 60) + 1
-        }
+        if (repeat.days.isEmpty()) return null
+        // Eight days covers any set of weekdays.
+        val horizon = 8
         var date = from.toLocalDate()
         repeat(horizon) {
             val candidate = LocalDateTime.of(date, time)
@@ -52,37 +44,31 @@ data class Reminder(
         return null
     }
 
-    private fun matches(date: LocalDate): Boolean = when (repeat) {
-        is Repeat.Weekdays -> date.dayOfWeek.value in repeat.days
-        is Repeat.EveryNDays -> {
-            val n = repeat.n.coerceAtLeast(1)
-            val delta = ChronoUnit.DAYS.between(LocalDate.ofEpochDay(repeat.anchorEpochDay), date)
-            delta >= 0 && delta % n == 0L
-        }
-    }
+    private fun matches(date: LocalDate): Boolean = date.dayOfWeek.value in repeat.days
 
     /** Human summary for the settings list. */
     fun describe(): String {
         val t = "%02d:%02d".format(hour, minute)
-        return when (repeat) {
-            is Repeat.Weekdays -> {
-                val days = repeat.days.sorted()
-                val label = when {
-                    days.isEmpty() -> "never"
-                    days.size == 7 -> "every day"
-                    days == listOf(1, 2, 3, 4, 5) -> "weekdays"
-                    days == listOf(6, 7) -> "weekends"
-                    else -> days.joinToString(", ") {
-                        DayOfWeek.of(it).name.lowercase().replaceFirstChar { c -> c.uppercase() }.take(3)
-                    }
-                }
-                "$t · $label"
-            }
-            is Repeat.EveryNDays -> when (repeat.n) {
-                1 -> "$t · every day"
-                2 -> "$t · every other day"
-                else -> "$t · every ${repeat.n} days"
-            }
+        val days = repeat.days.sorted()
+        val label = when {
+            days.isEmpty() -> "never"
+            days.size == 7 -> "every day"
+            days == listOf(1, 2, 3, 4, 5) -> "weekdays"
+            days == listOf(6, 7) -> "weekends"
+            else -> days.joinToString(", ") { dayLabel(it) }
+        }
+        return "$t · $label"
+    }
+
+    companion object {
+        /** Three-letter day name, e.g. "Mon". */
+        fun dayLabel(iso: Int): String =
+            DayOfWeek.of(iso).name.lowercase().replaceFirstChar { it.uppercase() }.take(3)
+
+        /** Single letter for the day picker. Tue and Thu, Sat and Sun collide,
+         *  so the picker relies on fixed Mon-first order for disambiguation. */
+        fun dayInitial(iso: Int): String = when (iso) {
+            1 -> "M"; 2 -> "T"; 3 -> "W"; 4 -> "T"; 5 -> "F"; 6 -> "S"; else -> "S"
         }
     }
 }

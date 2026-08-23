@@ -23,7 +23,7 @@ said is the learning event.
 | Piece | Choice |
 |---|---|
 | API | Go 1.26, chi, pgx |
-| Database | PostgreSQL 16 |
+| Database | SQLite (modernc.org/sqlite, pure Go) |
 | Transcription | Python + faster-whisper (CTranslate2), `KBLab/kb-whisper-small` |
 | Client | Native Android — Kotlin, Jetpack Compose, Material 3, Media3/ExoPlayer, Room |
 | Deployment | Docker Compose |

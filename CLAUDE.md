@@ -18,7 +18,7 @@ Two consequences that are easy to break:
 ## Layout
 
 ```
-api/       Go 1.26 — chi, pgx. HTTP API, ingestion pipeline, cron.
+api/       Go 1.26 — chi, database/sql + SQLite. API, pipeline, cron.
 worker/    Python — faster-whisper + KB-Whisper. Transcription only.
 android/   Kotlin, Jetpack Compose, Media3, Room. The only client.
 scripts/   android.sh builds the APK inside Docker.
@@ -65,6 +65,14 @@ and discarding downloads and settings. The user-visible branding is Monoglot.
 - **`scripts/android.sh` publishes only on release tasks**, and reads the
   version back out of the built APK. Publishing a stale APK under a fresh
   version number makes the in-app updater loop forever.
+- **SQLite needs ANALYZE after a bulk import.** Without `sqlite_stat1` the
+  planner drives the lookup join from `lexemes` and scans every entry for the
+  language: 12.5ms per lookup versus 0.006ms once analysed. `db.EnsureStats`
+  runs it on startup if it has never run.
+- **SQLite placeholders are positional.** Postgres `$1` can appear many times
+  and reuse one argument; `?` needs one argument per occurrence, in text order.
+  Converting between them silently reorders arguments — this caused three real
+  bugs, including downloads writing `audio_path` into the wrong column.
 - **Disk is tight.** Whisper models, Postgres, and the Gradle cache all compete.
   `docker builder prune -af` reclaims the most. A failing build that gets piped
   through `tail` will silently keep the old image running — always check exit

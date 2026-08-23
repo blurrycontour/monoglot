@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"database/sql"
 
 	"github.com/adityasingh/svenska/api/internal/config"
 )
@@ -14,14 +14,14 @@ import (
 // Runner serialises pipeline execution. Only one run may be in flight at a
 // time: transcription is CPU-bound and overlapping runs would thrash.
 type Runner struct {
-	pool *pgxpool.Pool
+	pool *sql.DB
 	cfg  config.Config
 
 	mu      sync.Mutex
 	running bool
 }
 
-func NewRunner(pool *pgxpool.Pool, cfg config.Config) *Runner {
+func NewRunner(pool *sql.DB, cfg config.Config) *Runner {
 	return &Runner{pool: pool, cfg: cfg}
 }
 
@@ -59,6 +59,14 @@ func (r *Runner) Trigger(reason string) bool {
 func (r *Runner) Run(ctx context.Context, reason string) {
 	start := time.Now()
 	log.Printf("ingest: run start (%s)", reason)
+
+	// Reclaim anything stranded mid-stage by a crash, a restart, or a bug.
+	// The spec's whole point in modelling this as a state machine is that any
+	// stage can fail and be retried; without this, an interrupted download
+	// sits in 'downloading' forever and no stage will ever pick it up.
+	if err := ReclaimStuck(ctx, r.pool); err != nil {
+		log.Printf("ERROR ingest: reclaiming stuck items: %v", err)
+	}
 
 	if err := Discover(ctx, r.pool); err != nil {
 		log.Printf("ERROR ingest: discover: %v", err)
@@ -119,10 +127,36 @@ func (r *Runner) StartCron(ctx context.Context) {
 	}()
 }
 
+// ReclaimStuck resets in-progress statuses to the stage that precedes them.
+// Both are safe to redo: download overwrites, and transcription replaces an
+// item's segments wholesale.
+func ReclaimStuck(ctx context.Context, conn *sql.DB) error {
+	res, err := conn.ExecContext(ctx, `
+		UPDATE items SET status = 'new'
+		WHERE status = 'downloading'`)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+
+	res2, err := conn.ExecContext(ctx, `
+		UPDATE items SET status = 'downloaded'
+		WHERE status = 'transcribing' AND audio_path IS NOT NULL`)
+	if err != nil {
+		return err
+	}
+	n2, _ := res2.RowsAffected()
+
+	if n+n2 > 0 {
+		log.Printf("ingest: reclaimed %d stuck download(s), %d stuck transcription(s)", n, n2)
+	}
+	return nil
+}
+
 // countPending reports how many items are waiting for transcription.
-func countPending(ctx context.Context, pool *pgxpool.Pool) (int, error) {
+func countPending(ctx context.Context, pool *sql.DB) (int, error) {
 	var n int
-	err := pool.QueryRow(ctx,
+	err := pool.QueryRowContext(ctx,
 		`SELECT count(*) FROM items WHERE status = 'downloaded'`).Scan(&n)
 	return n, err
 }
