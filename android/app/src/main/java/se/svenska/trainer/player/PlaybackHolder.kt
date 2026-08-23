@@ -1,0 +1,182 @@
+package se.svenska.trainer.player
+
+import android.content.ComponentName
+import android.content.Context
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.MoreExecutors
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+/** What is loaded right now, for anything that wants to show playback state. */
+data class NowPlaying(
+    val itemId: Int = -1,
+    val title: String = "",
+    val source: String = "",
+    val isPlaying: Boolean = false,
+    val positionMs: Int = 0,
+    val durationMs: Int = 0,
+    val speed: Float = 1.0f,
+) {
+    val active: Boolean get() = itemId > 0
+    val progress: Float
+        get() = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+}
+
+/**
+ * Process-wide owner of the MediaController.
+ *
+ * The mini player has to keep showing what is playing after the player screen
+ * is popped, so playback state cannot live in a screen-scoped ViewModel. This
+ * holds the single controller connection; the player screen layers transcript
+ * state on top of it.
+ */
+object PlaybackHolder {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    private val _now = MutableStateFlow(NowPlaying())
+    val now: StateFlow<NowPlaying> = _now.asStateFlow()
+
+    private var controller: MediaController? = null
+    private var ticker: Job? = null
+    private var onPositionChanged: ((Int) -> Unit)? = null
+
+    /** 10Hz. A word is never shorter than ~100ms, and 60Hz would burn battery
+     *  for no perceptible gain. */
+    private const val TICK_MS = 100L
+
+    fun connect(context: Context, onReady: (MediaController) -> Unit = {}) {
+        controller?.let { onReady(it); return }
+
+        val token = SessionToken(
+            context.applicationContext,
+            ComponentName(context.applicationContext, PlaybackService::class.java),
+        )
+        val future = MediaController.Builder(context.applicationContext, token).buildAsync()
+        future.addListener({
+            val c = future.get()
+            controller = c
+            c.addListener(listener)
+            syncFromController()
+            startTicker()
+            onReady(c)
+        }, MoreExecutors.directExecutor())
+    }
+
+    private val listener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            _now.value = _now.value.copy(isPlaying = isPlaying)
+        }
+
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            syncFromController()
+        }
+    }
+
+    private fun syncFromController() {
+        val c = controller ?: return
+        val id = c.currentMediaItem?.mediaId?.toIntOrNull() ?: -1
+        _now.value = _now.value.copy(
+            itemId = id,
+            title = c.mediaMetadata.title?.toString().orEmpty(),
+            source = c.mediaMetadata.artist?.toString().orEmpty(),
+            isPlaying = c.isPlaying,
+            durationMs = if (c.duration > 0) c.duration.toInt() else _now.value.durationMs,
+            speed = c.playbackParameters.speed,
+        )
+    }
+
+    private fun startTicker() {
+        ticker?.cancel()
+        ticker = scope.launch {
+            while (true) {
+                controller?.let { c ->
+                    val pos = c.currentPosition.toInt()
+                    val dur = if (c.duration > 0) c.duration.toInt() else _now.value.durationMs
+                    if (pos != _now.value.positionMs || dur != _now.value.durationMs) {
+                        _now.value = _now.value.copy(positionMs = pos, durationMs = dur)
+                    }
+                    onPositionChanged?.invoke(pos)
+                }
+                delay(TICK_MS)
+            }
+        }
+    }
+
+    /** The player screen registers here to drive word highlighting. */
+    fun observePosition(block: ((Int) -> Unit)?) {
+        onPositionChanged = block
+    }
+
+    fun prepare(
+        itemId: Int,
+        uri: String,
+        title: String,
+        source: String,
+        durationMs: Int,
+        resumeMs: Int,
+        speed: Float,
+    ) {
+        val c = controller ?: return
+        if (c.currentMediaItem?.mediaId != itemId.toString()) {
+            c.setMediaItem(
+                MediaItem.Builder()
+                    .setMediaId(itemId.toString())
+                    .setUri(uri)
+                    .setMediaMetadata(
+                        MediaMetadata.Builder().setTitle(title).setArtist(source).build()
+                    )
+                    .build()
+            )
+            c.prepare()
+            if (resumeMs > 1000) c.seekTo(resumeMs.toLong())
+        }
+        c.playbackParameters = PlaybackParameters(speed)
+        _now.value = _now.value.copy(
+            itemId = itemId, title = title, source = source,
+            durationMs = durationMs, speed = speed, isPlaying = c.isPlaying,
+        )
+    }
+
+    fun playPause() {
+        val c = controller ?: return
+        if (c.isPlaying) c.pause() else c.play()
+    }
+
+    fun play() { controller?.play() }
+    fun pause() { controller?.pause() }
+
+    fun seekTo(ms: Int) {
+        controller?.seekTo(ms.toLong().coerceAtLeast(0))
+    }
+
+    fun skip(deltaMs: Int) {
+        val c = controller ?: return
+        c.seekTo((c.currentPosition + deltaMs).coerceAtLeast(0))
+    }
+
+    fun setSpeed(speed: Float) {
+        controller?.playbackParameters = PlaybackParameters(speed)
+        _now.value = _now.value.copy(speed = speed)
+    }
+
+    /** Clears playback entirely, dismissing the mini player. */
+    fun stop() {
+        controller?.run { pause(); clearMediaItems() }
+        _now.value = NowPlaying()
+    }
+
+    fun position(): Int = controller?.currentPosition?.toInt() ?: 0
+}

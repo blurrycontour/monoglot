@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -45,6 +46,18 @@ import se.svenska.trainer.ui.util.Dates
 import se.svenska.trainer.ui.util.formatDuration
 import se.svenska.trainer.ui.util.remainingLabel
 
+/**
+ * Library filters. The previous single "hide finished" toggle looked broken
+ * because nothing was finished yet, so it visibly did nothing.
+ */
+enum class LibraryFilter(val label: String) {
+    ALL("All"),
+    UNPLAYED("Not started"),
+    IN_PROGRESS("In progress"),
+    FINISHED("Finished"),
+    DOWNLOADED("Downloaded"),
+}
+
 data class LibraryState(
     val loading: Boolean = true,
     val refreshing: Boolean = false,
@@ -53,7 +66,7 @@ data class LibraryState(
     val downloadedIds: Set<Int> = emptySet(),
     val busyIds: Set<Int> = emptySet(),
     val sourceFilter: String? = null,
-    val showFinished: Boolean = true,
+    val filter: LibraryFilter = LibraryFilter.ALL,
     val status: PipelineStatus? = null,
     val sources: List<SourceStats> = emptyList(),
 )
@@ -126,8 +139,9 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
-    fun toggleShowFinished() {
-        _state.value = _state.value.copy(showFinished = !_state.value.showFinished)
+    fun setFilter(filter: LibraryFilter) {
+        _state.value = _state.value.copy(filter = filter)
+        viewModelScope.launch { repo.settings.setLibraryFilter(filter.name) }
     }
 
     fun toggleDownload(item: ItemSummary) {
@@ -161,8 +175,17 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() { stopPolling(); super.onCleared() }
 
     /** Visible list after client-side filters. */
-    fun visible(s: LibraryState): List<ItemSummary> =
-        if (s.showFinished) s.items else s.items.filterNot { it.completed }
+    fun visible(s: LibraryState): List<ItemSummary> = when (s.filter) {
+        LibraryFilter.ALL -> s.items
+        LibraryFilter.UNPLAYED -> s.items.filter { it.positionMs == 0 && !it.completed }
+        LibraryFilter.IN_PROGRESS -> s.items.filter { it.positionMs > 0 && !it.completed }
+        LibraryFilter.FINISHED -> s.items.filter { it.completed }
+        LibraryFilter.DOWNLOADED -> s.items.filter { it.id in s.downloadedIds }
+    }
+
+    /** How many items each filter would show, for the filter sheet. */
+    fun counts(s: LibraryState): Map<LibraryFilter, Int> =
+        LibraryFilter.entries.associateWith { f -> visible(s.copy(filter = f)).size }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -173,28 +196,43 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
     val haptics = LocalHapticFeedback.current
     val pullState = rememberPullToRefreshState()
 
+    var filterSheet by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
-            LargeTopAppBar(
-                title = { Text("Lyssna", fontWeight = FontWeight.SemiBold) },
-                actions = {
-                    IconToggleButton(
-                        checked = !state.showFinished,
-                        onCheckedChange = {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            vm.toggleShowFinished()
-                        },
-                    ) {
-                        Icon(
-                            if (state.showFinished) Icons.Default.FilterList
-                            else Icons.Default.FilterListOff,
-                            contentDescription = if (state.showFinished)
-                                "Hide finished episodes" else "Show finished episodes",
-                        )
+            // A compact bar: the large variant spent nearly a quarter of the
+            // screen on one word.
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AppMark(Modifier.size(22.dp))
+                        Spacer(Modifier.width(9.dp))
+                        Text("Lyssna", fontWeight = FontWeight.SemiBold)
                     }
                 },
+                actions = {
+                    BadgedBox(
+                        badge = {
+                            if (state.filter != LibraryFilter.ALL) {
+                                Badge(Modifier.size(7.dp))
+                            }
+                        }
+                    ) {
+                        IconButton(onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            filterSheet = true
+                        }) {
+                            Icon(Icons.Default.FilterList, contentDescription = "Filter episodes")
+                        }
+                    }
+                },
+                windowInsets = WindowInsets(0),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                ),
             )
         },
+        containerColor = Color.Transparent,
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = state.refreshing,
@@ -203,6 +241,7 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {
             val visible = vm.visible(state)
+            LaunchedEffect(state.filter) { /* re-compose on filter change */ }
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -225,7 +264,7 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
                         ErrorState(state.error!!) { vm.refresh() }
                     }
 
-                    visible.isEmpty() -> item { EmptyState(state.showFinished) }
+                    visible.isEmpty() -> item { EmptyState(state.filter) }
 
                     else -> {
                         Dates.groupItems(visible).forEach { (header, groupItems) ->
@@ -248,6 +287,77 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
                     }
                 }
             }
+        }
+    }
+
+    if (filterSheet) {
+        FilterSheet(
+            current = state.filter,
+            counts = vm.counts(state),
+            onSelect = { vm.setFilter(it); filterSheet = false },
+            onDismiss = { filterSheet = false },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FilterSheet(
+    current: LibraryFilter,
+    counts: Map<LibraryFilter, Int>,
+    onSelect: (LibraryFilter) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(start = 8.dp, end = 8.dp, bottom = 28.dp)) {
+            Text(
+                "Show",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
+            )
+            LibraryFilter.entries.forEach { filter ->
+                val count = counts[filter] ?: 0
+                ListItem(
+                    headlineContent = { Text(filter.label) },
+                    trailingContent = {
+                        Text(
+                            "$count",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    leadingContent = {
+                        RadioButton(selected = current == filter, onClick = { onSelect(filter) })
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    modifier = Modifier.clickable { onSelect(filter) },
+                )
+            }
+        }
+    }
+}
+
+/** The launcher mark, reused in-app so the identity is visible inside the
+ *  product and not only on the home screen. */
+@Composable
+fun AppMark(modifier: Modifier = Modifier, tint: Color = MaterialTheme.colorScheme.primary) {
+    androidx.compose.foundation.Canvas(modifier) {
+        val barCount = 5
+        val heights = listOf(0.34f, 0.62f, 1f, 0.62f, 0.34f)
+        val slot = size.width / barCount
+        val barWidth = slot * 0.46f
+        heights.forEachIndexed { i, h ->
+            val barHeight = size.height * h
+            drawRoundRect(
+                color = tint,
+                topLeft = androidx.compose.ui.geometry.Offset(
+                    x = i * slot + (slot - barWidth) / 2f,
+                    y = (size.height - barHeight) / 2f,
+                ),
+                size = androidx.compose.ui.geometry.Size(barWidth, barHeight),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2f),
+            )
         }
     }
 }
@@ -392,10 +502,14 @@ private fun EpisodeCard(
 
             // Headline is secondary: for Klartext it is the same every day, and
             // for 8 Sidor it repeats the date. Kept for the description it adds.
-            if (item.description.isNotBlank()) {
+            // 8 Sidor podcast descriptions are often just the date as digits
+            // ("260821"), which is noise next to the date already shown above.
+            val description = item.description.trim()
+            val meaningful = description.length > 8 && description.any { it.isLetter() }
+            if (meaningful) {
                 Spacer(Modifier.height(7.dp))
                 Text(
-                    item.description,
+                    description,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -601,7 +715,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun EmptyState(showFinished: Boolean) {
+private fun EmptyState(filter: LibraryFilter) {
     Column(
         Modifier.fillMaxWidth().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -611,13 +725,13 @@ private fun EmptyState(showFinished: Boolean) {
             tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(14.dp))
         Text(
-            if (showFinished) "No episodes yet" else "Nothing left to listen to",
+            if (filter == LibraryFilter.ALL) "No episodes yet" else "Nothing matches this filter",
             style = MaterialTheme.typography.titleMedium,
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            if (showFinished) "Pull down to refresh, or fetch new episodes from Settings."
-            else "You have finished everything here. Turn the filter off to see them again.",
+            if (filter == LibraryFilter.ALL) "Pull down to refresh, or fetch new episodes from the System tab."
+            else "Try a different filter, or show everything.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

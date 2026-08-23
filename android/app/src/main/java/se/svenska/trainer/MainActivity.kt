@@ -21,8 +21,13 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -36,7 +41,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import se.svenska.trainer.data.Graph
+import se.svenska.trainer.player.PlaybackHolder
 import se.svenska.trainer.ui.screens.LibraryScreen
+import se.svenska.trainer.ui.screens.MiniPlayerHost
+import se.svenska.trainer.ui.screens.UpdateGate
 import se.svenska.trainer.ui.screens.PlayerScreen
 import se.svenska.trainer.ui.screens.SettingsScreen
 import se.svenska.trainer.ui.screens.SystemScreen
@@ -50,7 +58,11 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermission()
         enableEdgeToEdge()
         setContent {
-            SvenskaTheme { App() }
+            val themeId by Graph.repository.settings.themeFlow
+                .collectAsState(initial = "black")
+            val accentId by Graph.repository.settings.accentFlow
+                .collectAsState(initial = "default")
+            SvenskaTheme(themeId = themeId, accentId = accentId) { App() }
         }
     }
 
@@ -85,18 +97,33 @@ fun App() {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
+    val now by PlaybackHolder.now.collectAsState()
 
     // The player is immersive: it takes the whole screen, with no bottom bar
     // competing with the transport controls.
     val showBar = route in TABS.map { it.route }
 
+    // Reconnect on launch so the mini player reappears if playback survived
+    // the activity, which it does: the service outlives the UI.
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { PlaybackHolder.connect(context) }
+
+    UpdateGate()
+
     Scaffold(
+        containerColor = Color.Transparent,
         bottomBar = {
             AnimatedVisibility(
                 visible = showBar,
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut(),
             ) {
+                Column {
+                    MiniPlayerHost(
+                        visible = true,
+                        now = now,
+                        onExpand = { nav.navigate("player/${now.itemId}") },
+                    )
                 NavigationBar {
                     TABS.forEach { tab ->
                         val selected = backStack?.destination?.hierarchy
@@ -116,6 +143,7 @@ fun App() {
                             label = { Text(tab.label) },
                         )
                     }
+                }
                 }
             }
         },

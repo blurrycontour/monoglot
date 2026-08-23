@@ -1,7 +1,14 @@
 package se.svenska.trainer.ui.screens
 
 import android.app.Application
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -22,7 +29,13 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import se.svenska.trainer.data.Graph
 import se.svenska.trainer.data.SourceRow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import se.svenska.trainer.data.TranscriptMode
+import se.svenska.trainer.ui.theme.ACCENTS
+import se.svenska.trainer.ui.theme.ALL_THEMES
+import se.svenska.trainer.ui.theme.AppTheme
+import se.svenska.trainer.ui.theme.themeById
 
 data class SettingsState(
     val serverUrl: String = "",
@@ -160,15 +173,25 @@ fun SettingsScreen() {
             }
 
             HorizontalDivider()
+            SectionTitle("Appearance")
+            ThemePicker()
+
+            HorizontalDivider()
+            SectionTitle("App updates")
+            UpdateSection()
+
+            HorizontalDivider()
             SectionTitle("Playback")
             Text("Default speed", style = MaterialTheme.typography.bodyMedium)
-            SingleChoiceSegmentedButtonRow {
-                listOf(0.75f, 0.85f, 1.0f).forEachIndexed { i, s ->
-                    SegmentedButton(
-                        selected = kotlin.math.abs(state.speed - s) < 0.01f,
-                        onClick = { vm.setSpeed(s) },
-                        shape = SegmentedButtonDefaults.itemShape(i, 3),
-                    ) { Text(if (s == 1.0f) "1×" else "${s}×") }
+            val speeds = listOf(0.5f, 0.75f, 0.85f, 1.0f, 1.25f, 1.5f, 2.0f)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(speeds.size) { i ->
+                    val sp = speeds[i]
+                    FilterChip(
+                        selected = kotlin.math.abs(state.speed - sp) < 0.01f,
+                        onClick = { vm.setSpeed(sp) },
+                        label = { Text("${trimSpeed(sp)}×") },
+                    )
                 }
             }
 
@@ -198,6 +221,125 @@ fun SettingsScreen() {
     }
 }
 
+/**
+ * Theme picker. Each swatch previews its own background and accent, because a
+ * theme name says nothing about how it will feel.
+ */
+@Composable
+private fun ThemePicker() {
+    val settings = Graph.repository.settings
+    val scope = rememberCoroutineScope()
+    val currentTheme by settings.themeFlow.collectAsState(initial = "black")
+    val currentAccent by settings.accentFlow.collectAsState(initial = "default")
+
+    Text("Theme", style = MaterialTheme.typography.bodyMedium)
+    Spacer(Modifier.height(8.dp))
+
+    val light = ALL_THEMES.filter { !it.dark }
+    val dark = ALL_THEMES.filter { it.dark }
+
+    listOf("Light" to light, "Dark" to dark).forEach { (group, themes) ->
+        Text(
+            group,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 6.dp, bottom = 4.dp),
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(themes.size) { i ->
+                val theme = themes[i]
+                ThemeSwatch(
+                    theme = theme,
+                    selected = theme.id == currentTheme,
+                    onClick = { scope.launch { settings.setTheme(theme.id) } },
+                )
+            }
+        }
+    }
+
+    Spacer(Modifier.height(16.dp))
+    Text("Accent", style = MaterialTheme.typography.bodyMedium)
+    Spacer(Modifier.height(8.dp))
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(ACCENTS.size) { i ->
+            val accent = ACCENTS[i]
+            val theme = themeById(currentTheme)
+            val swatchColor = when {
+                accent.id == "default" -> theme.scheme.primary
+                theme.dark -> accent.dark
+                else -> accent.light
+            }
+            Box(
+                Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(swatchColor)
+                    .border(
+                        width = if (accent.id == currentAccent) 3.dp else 0.dp,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        shape = CircleShape,
+                    )
+                    .clickable { scope.launch { settings.setAccent(accent.id) } },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (accent.id == "default") {
+                    Text("A", color = MaterialTheme.colorScheme.onPrimary,
+                        style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemeSwatch(theme: AppTheme, selected: Boolean, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier
+                .size(width = 62.dp, height = 84.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(theme.scheme.background)
+                .border(
+                    width = if (selected) 3.dp else 1.dp,
+                    color = if (selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outlineVariant,
+                    shape = RoundedCornerShape(12.dp),
+                )
+                .clickable(onClick = onClick),
+        ) {
+            Column(Modifier.padding(8.dp)) {
+                Box(
+                    Modifier
+                        .size(width = 30.dp, height = 7.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(theme.scheme.primary)
+                )
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(26.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(theme.scheme.surface)
+                )
+                Spacer(Modifier.height(5.dp))
+                Box(
+                    Modifier
+                        .size(width = 22.dp, height = 6.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(theme.scheme.secondary)
+                )
+            }
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(
+            theme.name,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        )
+    }
+}
+
 @Composable
 private fun SectionTitle(text: String) {
     Text(text, fontWeight = FontWeight.SemiBold, fontSize = 17.sp,
@@ -211,10 +353,28 @@ private fun SectionTitle(text: String) {
 @Composable
 private fun AboutSection() {
     SectionTitle("About")
-    Text(
-        "Svenska Listening Trainer — a personal tool for Swedish listening comprehension.",
-        style = MaterialTheme.typography.bodyMedium,
-    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(46.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            AppMark(Modifier.size(26.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text("Svenska", fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Listening trainer",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    Spacer(Modifier.height(10.dp))
     Spacer(Modifier.height(10.dp))
 
     Attribution(

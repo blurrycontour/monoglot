@@ -42,6 +42,7 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/", s.downloadPage)
 	r.Get("/download", s.downloadPage)
 	r.Get("/download/svenska.apk", s.downloadAPK)
+	r.Get("/api/app/version", s.appVersion)
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.auth)

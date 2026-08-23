@@ -83,6 +83,15 @@ if [ -f "$APK" ]; then
   mkdir -p "$APK_DIR"
   cp "$APK" "$APK_DIR/svenska.apk"
   echo "$VERSION_NAME (build $VERSION_CODE)" > "$APK_DIR/version.txt"
+  # Machine-readable manifest for the app's own update check.
+  cat > "$APK_DIR/version.json" <<JSON
+{
+  "version_code": $VERSION_CODE,
+  "version_name": "$VERSION_NAME",
+  "size_bytes": $(stat -c%s "$APK"),
+  "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+JSON
   echo "==> Published to $APK_DIR/svenska.apk"
   echo "    Install from a phone browser: http://<server-ip>:${API_PORT:-8080}/download"
 fi

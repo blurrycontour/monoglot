@@ -66,6 +66,8 @@ android {
     }
     buildFeatures {
         compose = true
+        // The updater compares BuildConfig.VERSION_CODE against the server.
+        buildConfig = true
     }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"

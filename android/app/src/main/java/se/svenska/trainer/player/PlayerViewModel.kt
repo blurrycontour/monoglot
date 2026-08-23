@@ -1,20 +1,12 @@
 package se.svenska.trainer.player
 
 import android.app.Application
-import android.content.ComponentName
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackParameters
-import androidx.media3.common.Player
-import androidx.media3.session.MediaController
-import androidx.media3.session.SessionToken
-import com.google.common.util.concurrent.MoreExecutors
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import se.svenska.trainer.data.Bundle
@@ -53,14 +45,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
 
-    private var controller: MediaController? = null
     private var index: TokenIndex? = null
-    private var tickerJob: Job? = null
     private var itemId: Int = -1
-
-    /** Position updates run at 10Hz. 60Hz would burn battery for no
-     *  perceptible gain: a word is never shorter than ~100ms. */
-    private val tickIntervalMs = 100L
+    private var lastSavedBucket = -1
 
     fun load(itemId: Int) {
         if (this.itemId == itemId && _state.value.bundle != null) return
@@ -81,72 +68,43 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     speed = speed,
                     isDownloaded = repo.isDownloaded(itemId),
                 )
-                connectController(itemId, bundle)
+
+                PlaybackHolder.connect(getApplication()) {
+                    viewModelScope.launch {
+                        PlaybackHolder.prepare(
+                            itemId = itemId,
+                            uri = repo.mediaUri(itemId),
+                            title = bundle.item.title,
+                            source = bundle.item.sourceName,
+                            durationMs = bundle.item.durationMs,
+                            // Local position wins: it is current even when the
+                            // last session was offline.
+                            resumeMs = maxOf(repo.localProgress(itemId), bundle.item.positionMs),
+                            speed = speed,
+                        )
+                        PlaybackHolder.observePosition { pos -> updatePosition(pos) }
+                    }
+                }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to load")
             }
         }
     }
 
-    private fun connectController(itemId: Int, bundle: Bundle) {
-        val ctx = getApplication<Application>()
-        val token = SessionToken(ctx, ComponentName(ctx, PlaybackService::class.java))
-        val future = MediaController.Builder(ctx, token).buildAsync()
-        future.addListener({
-            val c = future.get()
-            controller = c
-            viewModelScope.launch {
-                val uri = repo.mediaUri(itemId)
-                val currentTag = c.currentMediaItem?.mediaId
-                if (currentTag != itemId.toString()) {
-                    c.setMediaItem(
-                        MediaItem.Builder()
-                            .setMediaId(itemId.toString())
-                            .setUri(uri)
-                            .setMediaMetadata(
-                                androidx.media3.common.MediaMetadata.Builder()
-                                    .setTitle(bundle.item.title)
-                                    .setArtist(bundle.item.sourceName)
-                                    .build()
-                            )
-                            .build()
-                    )
-                    c.prepare()
-                    // Resume where the user left off. Local position wins:
-                    // it is current even when the last session was offline.
-                    val resume = maxOf(repo.localProgress(itemId), bundle.item.positionMs)
-                    if (resume > 1000) c.seekTo(resume.toLong())
-                }
-                c.playbackParameters = PlaybackParameters(_state.value.speed)
-                c.addListener(playerListener)
-                _state.value = _state.value.copy(isPlaying = c.isPlaying)
-                startTicker()
-            }
-        }, MoreExecutors.directExecutor())
-    }
-
-    private val playerListener = object : Player.Listener {
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            _state.value = _state.value.copy(isPlaying = isPlaying)
-        }
-    }
-
-    private fun startTicker() {
-        tickerJob?.cancel()
-        tickerJob = viewModelScope.launch {
-            while (true) {
-                val c = controller
-                if (c != null) {
-                    val pos = c.currentPosition.toInt()
-                    val dur = if (c.duration > 0) c.duration.toInt() else _state.value.durationMs
-                    updatePosition(pos, dur)
-                }
-                delay(tickIntervalMs)
+    init {
+        // Mirror transport state owned by the holder into this screen's state.
+        viewModelScope.launch {
+            PlaybackHolder.now.collect { now ->
+                _state.value = _state.value.copy(
+                    isPlaying = now.isPlaying,
+                    speed = now.speed,
+                    durationMs = if (now.durationMs > 0) now.durationMs else _state.value.durationMs,
+                )
             }
         }
     }
 
-    private fun updatePosition(positionMs: Int, durationMs: Int) {
+    private fun updatePosition(positionMs: Int) {
         val idx = index ?: return
         val tokenIdx = idx.tokenAt(positionMs)
         val segIdx = idx.segmentAt(positionMs)
@@ -154,18 +112,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
         // A revealed sentence re-hides once playback leaves it: the reveal is
         // meant to be a momentary crutch, not a creeping slide into full text.
-        val revealed = if (s.revealedSegmentIdx >= 0 && segIdx != s.revealedSegmentIdx) {
-            -1
-        } else {
-            s.revealedSegmentIdx
-        }
+        val revealed = if (s.revealedSegmentIdx >= 0 && segIdx != s.revealedSegmentIdx) -1
+                       else s.revealedSegmentIdx
 
         if (tokenIdx != s.activeTokenIdx || segIdx != s.activeSegmentIdx ||
             positionMs != s.positionMs || revealed != s.revealedSegmentIdx
         ) {
             _state.value = s.copy(
                 positionMs = positionMs,
-                durationMs = durationMs,
                 activeTokenIdx = tokenIdx,
                 activeSegmentIdx = segIdx,
                 revealedSegmentIdx = revealed,
@@ -175,27 +129,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // Persist roughly every 5 seconds rather than every tick.
         if (positionMs / 5000 != lastSavedBucket) {
             lastSavedBucket = positionMs / 5000
+            val dur = _state.value.durationMs
             viewModelScope.launch {
-                repo.saveProgress(itemId, positionMs, completed = durationMs > 0 && positionMs > durationMs - 5000)
+                repo.saveProgress(itemId, positionMs,
+                    completed = dur > 0 && positionMs > dur - 5000)
             }
         }
     }
 
-    private var lastSavedBucket = -1
+    fun playPause() = PlaybackHolder.playPause()
 
-    fun playPause() {
-        val c = controller ?: return
-        if (c.isPlaying) c.pause() else c.play()
-    }
+    fun seekTo(ms: Int) = PlaybackHolder.seekTo(ms)
 
-    fun seekTo(ms: Int) {
-        controller?.seekTo(ms.toLong().coerceAtLeast(0))
-    }
-
-    fun skip(deltaMs: Int) {
-        val c = controller ?: return
-        c.seekTo((c.currentPosition + deltaMs).coerceAtLeast(0))
-    }
+    fun skip(deltaMs: Int) = PlaybackHolder.skip(deltaMs)
 
     /** Replay the sentence being played. The most-used control after play. */
     fun replaySegment() {
@@ -225,18 +171,23 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setSpeed(speed: Float) {
-        controller?.playbackParameters = PlaybackParameters(speed)
+        PlaybackHolder.setSpeed(speed)
         _state.value = _state.value.copy(speed = speed)
         viewModelScope.launch { repo.settings.setSpeed(speed) }
     }
 
     fun cycleTranscriptMode() {
-        val next = when (_state.value.transcriptMode) {
-            TranscriptMode.HIDDEN -> TranscriptMode.REVEAL
-            TranscriptMode.REVEAL -> TranscriptMode.FULL
-            TranscriptMode.FULL -> TranscriptMode.HIDDEN
-        }
-        _state.value = _state.value.copy(transcriptMode = next, revealedSegmentIdx = -1)
+        setTranscriptMode(
+            when (_state.value.transcriptMode) {
+                TranscriptMode.HIDDEN -> TranscriptMode.REVEAL
+                TranscriptMode.REVEAL -> TranscriptMode.FULL
+                TranscriptMode.FULL -> TranscriptMode.HIDDEN
+            }
+        )
+    }
+
+    fun setTranscriptMode(mode: TranscriptMode) {
+        _state.value = _state.value.copy(transcriptMode = mode, revealedSegmentIdx = -1)
     }
 
     fun revealCurrentSentence() {
@@ -276,12 +227,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun tokenIndex(): TokenIndex? = index
 
     override fun onCleared() {
-        tickerJob?.cancel()
-        controller?.removeListener(playerListener)
-        // The controller is released, not the player: playback continues in
-        // the service after the screen goes away.
-        controller?.release()
-        controller = null
+        // Only stop driving highlight updates. Playback itself keeps running:
+        // the holder owns the controller so the mini player survives this
+        // screen being popped.
+        PlaybackHolder.observePosition(null)
         super.onCleared()
     }
 }
