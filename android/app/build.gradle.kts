@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,6 +7,16 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
 }
+
+// Signing key. Debug builds in a container are the reason Android refuses to
+// update an installed app: the debug keystore lives under HOME, which is
+// ephemeral here, so every build is signed by a different key and Android sees
+// a different app. A persistent release keystore fixes that.
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val hasKeystore = keystoreProps.getProperty("storeFile") != null
 
 android {
     namespace = "se.svenska.trainer"
@@ -17,19 +29,31 @@ android {
         applicationId = "se.svenska.trainer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // Must increase for Android to accept an update. Supplied by the
+        // build script from the git commit count; falls back to 1 locally.
+        versionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("appVersionName") as String?) ?: "1.0"
+    }
+
+    signingConfigs {
+        if (hasKeystore) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
+            // Left off deliberately: shrinking buys little for a personal app
+            // and R8 rules are one more thing to debug on a phone.
             isMinifyEnabled = false
-        }
-        debug {
-            // Personal, single-user, LAN-only. The debug build is the one that
-            // gets sideloaded, so make it cleartext-friendly for a homelab
-            // host on a plain http:// address.
-            applicationIdSuffix = ""
+            if (hasKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

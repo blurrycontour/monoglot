@@ -37,6 +37,12 @@ func (s *Server) Routes() http.Handler {
 	// Unauthenticated: used by the Docker healthcheck.
 	r.Get("/api/health", s.health)
 
+	// Unauthenticated install page. The phone needs the APK before it can
+	// hold a token, so this cannot sit behind auth. Serves only the APK.
+	r.Get("/", s.downloadPage)
+	r.Get("/download", s.downloadPage)
+	r.Get("/download/svenska.apk", s.downloadAPK)
+
 	r.Group(func(r chi.Router) {
 		r.Use(s.auth)
 
@@ -51,6 +57,7 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/api/words", s.listWords)
 		r.Get("/api/export/anki", s.exportAnki)
 
+		r.Get("/api/status", s.pipelineStatus)
 		r.Get("/api/sources", s.listSources)
 		r.Post("/api/sources/{id}/enabled", s.setSourceEnabled)
 		r.Post("/api/admin/ingest", s.triggerIngest)

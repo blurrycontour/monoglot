@@ -49,24 +49,34 @@ done
 docker compose exec -T worker curl -fsS -X POST http://localhost:9000/warm >/dev/null
 echo " model ready"
 
-say "Running the ingestion pipeline (discover, download, transcribe)"
-say "Transcription runs at roughly 3x realtime on CPU; a 5 minute episode takes ~90s."
+say "Fetching the episode list and downloading audio"
+say "This part is quick. Transcription is the slow step and runs in the background."
 docker compose run --rm api ingest discover
 docker compose run --rm api ingest download
-docker compose run --rm api ingest transcribe
 
-say "Done. Ready items:"
-docker compose exec -T postgres psql -U "$(grep -E '^POSTGRES_USER=' .env | cut -d= -f2)" \
-  -d "$(grep -E '^POSTGRES_DB=' .env | cut -d= -f2)" \
-  -c "SELECT i.id, s.slug, i.status, left(i.title, 40) FROM items i JOIN sources s ON s.id=i.source_id WHERE i.status='ready' ORDER BY i.id;"
+# Transcription takes roughly 20s per minute of audio on CPU, so blocking on it
+# here would mean a ten minute wait before you could open the app. Hand it to
+# the running API instead: it transcribes in the background and the app shows
+# progress on the library screen.
+say "Starting transcription in the background"
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:$PORT/api/admin/ingest" >/dev/null && echo "  started"
+
+LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')
+LAN_IP=${LAN_IP:-<this-machine-lan-ip>}
 
 cat <<EOF
 
-Next steps
-  Server URL for the phone:  http://<this-machine-lan-ip>:$PORT
-  Auth token:                $TOKEN
+Ready. Transcription is running in the background; episodes appear in the app
+as they finish, and the library screen shows how many are still processing.
 
-  Build the Android app:     ./scripts/android.sh assembleDebug
-  APK lands at:              android/app/build/outputs/apk/debug/app-debug.apk
+  Install the app:  http://$LAN_IP:$PORT/download
+  Server URL:       http://$LAN_IP:$PORT
+  Auth token:       $TOKEN
 
+If the install page says no APK has been built yet, run:
+
+  ./scripts/android.sh
+
+Watch progress:     docker compose logs -f api worker
 EOF

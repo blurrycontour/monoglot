@@ -39,15 +39,33 @@ on the host.
 Goes from a clean checkout to a working instance with Klartext episodes fully
 processed. It is idempotent — re-running is safe and skips completed work.
 
-Then build the app:
+`bootstrap.sh` returns as soon as audio is downloaded. Transcription is the slow
+step and continues in the background — episodes appear in the app as they
+finish, and the library screen shows how many are still processing.
+
+Then build the app and install it from the phone:
 
 ```bash
-./scripts/android.sh assembleDebug
-# APK: android/app/build/outputs/apk/debug/app-debug.apk
+./scripts/android.sh          # signed release APK
 ```
 
-Install it, open **Settings**, and enter the server URL
-(`http://<your-lan-ip>:8080`) and the `AUTH_TOKEN` from `.env`.
+Open `http://<your-lan-ip>:8080/download` on the phone and tap Download. Then
+open the app, go to **Settings**, and enter the server URL and the `AUTH_TOKEN`
+from `.env`.
+
+### Updating the app
+
+Builds are signed with a persistent key at `android/release.keystore` and carry
+a monotonically increasing `versionCode`, so Android installs each new build
+over the last one, keeping downloads and settings.
+
+**Back up `android/release.keystore` and `android/keystore.properties`.** Both
+are gitignored because they are secrets. If you lose them, Android will reject
+every future update and you would have to uninstall the app to reinstall it.
+
+Debug builds do not have this property: the container's debug keystore is
+regenerated on every run, so each debug APK is signed by a different key and
+Android treats it as a different app.
 
 ## Operating it
 
@@ -58,6 +76,14 @@ docker compose run --rm api ingest            # full pipeline now
 docker compose run --rm api ingest discover   # or a single stage
 docker compose run --rm api find-program klartext   # if SR renumbers the program
 cd api && GOWORK=off go test ./...
+```
+
+The dictionary and morphology imports skip themselves once the tables are
+populated, so re-running `bootstrap.sh` is cheap. To reimport after a dataset
+update:
+
+```bash
+docker compose run --rm api import-morphology --force
 ```
 
 Ingestion also runs in-process nightly at `INGEST_CRON_HOUR:INGEST_CRON_MINUTE`

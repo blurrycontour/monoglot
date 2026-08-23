@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -47,14 +48,20 @@ func main() {
 	case "import-dictionary":
 		pool := mustConnect(ctx, cfg)
 		defer pool.Close()
-		path := mustFetch(ctx, lexicon.FolketsURL, "folkets.xml", argAt(2))
+		if alreadyImported(ctx, pool, "lexemes", "origin = 'folkets'") {
+			return
+		}
+		path := mustFetch(ctx, lexicon.FolketsURL, "folkets.xml", localPath(2))
 		if err := lexicon.ImportFolkets(ctx, pool, path); err != nil {
 			log.Fatalf("import-dictionary: %v", err)
 		}
 	case "import-morphology":
 		pool := mustConnect(ctx, cfg)
 		defer pool.Close()
-		path := mustFetch(ctx, lexicon.SaldoURL, "saldom.xml", argAt(2))
+		if alreadyImported(ctx, pool, "forms", "") {
+			return
+		}
+		path := mustFetch(ctx, lexicon.SaldoURL, "saldom.xml", localPath(2))
 		if err := lexicon.ImportSaldo(ctx, pool, path); err != nil {
 			log.Fatalf("import-morphology: %v", err)
 		}
@@ -102,6 +109,48 @@ func main() {
 	default:
 		log.Fatalf("unknown command %q (serve|migrate|import-dictionary|import-morphology|ingest|find-program)", cmd)
 	}
+}
+
+// alreadyImported reports whether a bootstrap import can be skipped. Both
+// imports are row-level idempotent, but re-running them still costs a 250MB
+// download on a fresh checkout plus a full re-parse and 1.7M redundant upserts.
+// Pass --force to reimport anyway (after a dataset update, say).
+func alreadyImported(ctx context.Context, pool *pgxpool.Pool, table, where string) bool {
+	if hasFlag("--force") {
+		log.Printf("%s: --force given, reimporting", table)
+		return false
+	}
+	q := "SELECT count(*) FROM " + table
+	if where != "" {
+		q += " WHERE " + where
+	}
+	var n int
+	if err := pool.QueryRow(ctx, q).Scan(&n); err != nil {
+		// Cannot tell: do the work rather than silently skip it.
+		return false
+	}
+	if n == 0 {
+		return false
+	}
+	log.Printf("%s already populated (%d rows), skipping import. Use --force to reimport.", table, n)
+	return true
+}
+
+func hasFlag(name string) bool {
+	for _, a := range os.Args[1:] {
+		if a == name {
+			return true
+		}
+	}
+	return false
+}
+
+// localPath returns a positional path override, ignoring flags.
+func localPath(i int) string {
+	if v := argAt(i); v != "" && !strings.HasPrefix(v, "-") {
+		return v
+	}
+	return ""
 }
 
 func argAt(i int) string {

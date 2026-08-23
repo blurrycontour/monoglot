@@ -18,7 +18,7 @@ ingest:
 	docker compose run --rm api ingest
 
 apk:
-	./scripts/android.sh assembleDebug
+	./scripts/android.sh
 
 test:
 	cd api && GOWORK=off go test ./...

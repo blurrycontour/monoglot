@@ -21,6 +21,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import se.svenska.trainer.data.Graph
 import se.svenska.trainer.data.ItemSummary
+import se.svenska.trainer.data.PipelineStatus
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 
 data class LibraryState(
     val loading: Boolean = true,
@@ -29,12 +32,15 @@ data class LibraryState(
     val downloadedIds: Set<Int> = emptySet(),
     val busyIds: Set<Int> = emptySet(),
     val sourceFilter: String? = null,
+    val status: PipelineStatus? = null,
 )
 
 class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = Graph.repository
     private val _state = MutableStateFlow(LibraryState())
     val state = _state.asStateFlow()
+
+    private var pollJob: Job? = null
 
     init { refresh() }
 
@@ -48,7 +54,46 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                 onSuccess = { _state.value.copy(loading = false, items = it, downloadedIds = downloaded) },
                 onFailure = { _state.value.copy(loading = false, error = it.message ?: "Cannot reach server") },
             )
+            refreshStatus()
         }
+    }
+
+    private suspend fun refreshStatus() {
+        val status = runCatching { repo.api.status() }.getOrNull() ?: return
+        _state.value = _state.value.copy(status = status)
+        // While the server is still transcribing, poll so newly finished
+        // episodes appear on their own. A fresh install is otherwise an empty
+        // screen for several minutes with no sign anything is happening.
+        if (status.processing > 0 || status.ingestRunning) startPolling() else stopPolling()
+    }
+
+    private fun startPolling() {
+        if (pollJob?.isActive == true) return
+        pollJob = viewModelScope.launch {
+            while (true) {
+                delay(15_000)
+                val status = runCatching { repo.api.status() }.getOrNull() ?: continue
+                val before = _state.value.status?.ready ?: 0
+                _state.value = _state.value.copy(status = status)
+                // Only refetch the list when something actually finished.
+                if (status.ready != before) {
+                    repo.items(_state.value.sourceFilter).onSuccess {
+                        _state.value = _state.value.copy(items = it)
+                    }
+                }
+                if (status.processing == 0 && !status.ingestRunning) break
+            }
+        }
+    }
+
+    private fun stopPolling() {
+        pollJob?.cancel()
+        pollJob = null
+    }
+
+    override fun onCleared() {
+        stopPolling()
+        super.onCleared()
     }
 
     fun setFilter(slug: String?) {
@@ -104,6 +149,8 @@ fun LibraryScreen(onOpen: (Int) -> Unit, onWords: () -> Unit, onSettings: () -> 
                 }
             }
 
+            state.status?.let { ProcessingBanner(it) }
+
             when {
                 state.loading && state.items.isEmpty() ->
                     Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
@@ -138,6 +185,53 @@ fun LibraryScreen(onOpen: (Int) -> Unit, onWords: () -> Unit, onSettings: () -> 
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Shows what the server is still working on. Transcription is slow, so without
+ * this a fresh install looks broken rather than busy.
+ */
+@Composable
+private fun ProcessingBanner(status: PipelineStatus) {
+    if (status.processing == 0 && status.failed == 0) return
+
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (status.processing > 0) {
+                CircularProgressIndicator(
+                    Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(
+                        "Preparing ${status.processing} episode${if (status.processing == 1) "" else "s"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    Text(
+                        "They appear here as transcription finishes.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+            } else {
+                Text(
+                    "${status.failed} episode${if (status.failed == 1) "" else "s"} failed to process",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
             }
         }
     }

@@ -49,6 +49,7 @@ services:
       AUDIO_DIR: /data/audio
       RAW_DIR: /data/raw
       DATA_CACHE_DIR: /data/cache
+      APK_PATH: /data/apk/svenska.apk
       WORKER_URL: http://worker:9000
       INGEST_CRON_HOUR: ${INGEST_CRON_HOUR}
       INGEST_CRON_MINUTE: ${INGEST_CRON_MINUTE}
