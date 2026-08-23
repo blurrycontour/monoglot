@@ -49,7 +49,7 @@ storePassword=$PASS
 keyAlias=svenska
 keyPassword=$PASS
 EOF
-  chmod 600 "$KEYPROPS"
+  chmod 600 "$KEYPROPS" "$KEYSTORE"
   cat <<EOF
 
   *** BACK UP android/release.keystore AND android/keystore.properties ***
