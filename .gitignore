@@ -1,16 +1,28 @@
+# Secrets
 .env
+
+# Signing keys — back these up privately. Losing them means Android will
+# refuse every future update of the app.
+android/release.keystore
+android/keystore.properties
+
+# Content, audio, models and generated artefacts
 data/
-node_modules/
-dist/
-*.apk
-web/android/
-__pycache__/
-*.pyc
 models/
+*.apk
+*.log
+
+# Android / Gradle build state
 android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
 .kotlin/
-android/release.keystore
-android/keystore.properties
+android/.kotlin/
+
+# Python
+__pycache__/
+*.pyc
+
+# Local tool state
+.claude/settings.local.json

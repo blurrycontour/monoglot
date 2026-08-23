@@ -26,7 +26,7 @@ const SaldoURL = "https://svn.spraakbanken.gu.se/sb-arkiv/pub/lmf/saldom/saldom.
 // balloon the table and are pure noise for tap-to-define, which only ever
 // looks up a single tapped token: "gick" should offer "ga", not also
 // "ga av stapeln", "ga bet", "ga bort" and forty other idioms.
-func ImportSaldo(ctx context.Context, pool *pgxpool.Pool, path string) error {
+func ImportSaldo(ctx context.Context, pool *pgxpool.Pool, lang, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -92,7 +92,7 @@ func ImportSaldo(ctx context.Context, pool *pgxpool.Pool, path string) error {
 					if form == "" || strings.ContainsAny(form, " \t") {
 						continue
 					}
-					batch = append(batch, []any{form, lemma, nullable(pos)})
+					batch = append(batch, []any{lang, form, lemma, nullable(pos)})
 					if len(batch) >= 50000 {
 						if err := flush(); err != nil {
 							return err
@@ -109,8 +109,20 @@ func ImportSaldo(ctx context.Context, pool *pgxpool.Pool, path string) error {
 	if err := flush(); err != nil {
 		return err
 	}
-	log.Printf("saldo: done, %d forms from %d entries", total, entries)
+	log.Printf("saldo: done, %d forms from %d entries (%s)", total, entries, lang)
 	return nil
+}
+
+// SaldoProvider adapts the SALDO importer to the MorphologyProvider interface.
+type SaldoProvider struct{}
+
+func (SaldoProvider) SourceURL() string { return SaldoURL }
+func (SaldoProvider) CacheName() string { return "saldom.xml" }
+func (SaldoProvider) Attribution() string {
+	return "SALDO, Språkbanken, University of Gothenburg, CC BY-SA 2.5"
+}
+func (SaldoProvider) Import(ctx context.Context, pool *pgxpool.Pool, lang, path string) error {
+	return ImportSaldo(ctx, pool, lang, path)
 }
 
 // skipLemma drops multiword entries. SALDO marks these with a trailing "m" on
@@ -149,19 +161,19 @@ func CopyForms(ctx context.Context, pool *pgxpool.Pool, rows [][]any) error {
 	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx, `CREATE TEMP TABLE forms_stage
-		(form TEXT, lemma TEXT, pos TEXT) ON COMMIT DROP`); err != nil {
+		(language_code TEXT, form TEXT, lemma TEXT, pos TEXT) ON COMMIT DROP`); err != nil {
 		return err
 	}
 	if _, err := tx.CopyFrom(ctx,
 		pgx.Identifier{"forms_stage"},
-		[]string{"form", "lemma", "pos"},
+		[]string{"language_code", "form", "lemma", "pos"},
 		pgx.CopyFromRows(rows),
 	); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO forms (form, lemma, pos)
-		SELECT DISTINCT form, lemma, pos FROM forms_stage
+		INSERT INTO forms (language_code, form, lemma, pos)
+		SELECT DISTINCT language_code, form, lemma, pos FROM forms_stage
 		ON CONFLICT DO NOTHING`); err != nil {
 		return err
 	}
@@ -179,20 +191,21 @@ func copyLexemes(ctx context.Context, pool *pgxpool.Pool, rows [][]any) error {
 	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx, `CREATE TEMP TABLE lexemes_stage
-		(lemma TEXT, pos TEXT, definitions JSONB, origin TEXT) ON COMMIT DROP`); err != nil {
+		(language_code TEXT, lemma TEXT, pos TEXT, definitions JSONB, origin TEXT)
+		ON COMMIT DROP`); err != nil {
 		return err
 	}
 	if _, err := tx.CopyFrom(ctx,
 		pgx.Identifier{"lexemes_stage"},
-		[]string{"lemma", "pos", "definitions", "origin"},
+		[]string{"language_code", "lemma", "pos", "definitions", "origin"},
 		pgx.CopyFromRows(rows),
 	); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO lexemes (lemma, pos, definitions, origin)
-		SELECT lemma, pos, definitions, origin FROM lexemes_stage
-		ON CONFLICT (lemma, COALESCE(pos, ''), origin)
+		INSERT INTO lexemes (language_code, lemma, pos, definitions, origin)
+		SELECT language_code, lemma, pos, definitions, origin FROM lexemes_stage
+		ON CONFLICT (language_code, lemma, COALESCE(pos, ''), origin)
 		DO UPDATE SET definitions = EXCLUDED.definitions`); err != nil {
 		return err
 	}

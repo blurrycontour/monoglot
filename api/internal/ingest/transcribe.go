@@ -87,12 +87,16 @@ func TranscribePending(ctx context.Context, pool *pgxpool.Pool, workerURL, rawDi
 }
 
 func transcribeItem(ctx context.Context, pool *pgxpool.Pool, workerURL, rawDir string, id int, audioPath string) error {
+	// The item's language drives both the ASR hint and which dictionary the
+	// lemmatiser consults.
+	lang := itemLanguage(ctx, pool, id)
+	asr := lexicon.ASRCode(ctx, pool, id)
 	if _, err := pool.Exec(ctx,
 		`UPDATE items SET status='transcribing', error=NULL WHERE id=$1`, id); err != nil {
 		return err
 	}
 
-	resp, err := callWorker(ctx, workerURL, audioPath)
+	resp, err := callWorker(ctx, workerURL, audioPath, asr)
 	if err != nil {
 		return err
 	}
@@ -112,11 +116,11 @@ func transcribeItem(ctx context.Context, pool *pgxpool.Pool, workerURL, rawDir s
 		}
 	}
 
-	return persist(ctx, pool, id, resp)
+	return persist(ctx, pool, id, lang, resp)
 }
 
-func callWorker(ctx context.Context, workerURL, audioPath string) (*TranscriptResponse, error) {
-	body, err := json.Marshal(map[string]string{"audio_path": audioPath})
+func callWorker(ctx context.Context, workerURL, audioPath, language string) (*TranscriptResponse, error) {
+	body, err := json.Marshal(map[string]string{"audio_path": audioPath, "language": language})
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +153,7 @@ func callWorker(ctx context.Context, workerURL, audioPath string) (*TranscriptRe
 
 // persist writes segments and tokens in one transaction, resolving each token's
 // lemma as it goes so the read path never does morphology work.
-func persist(ctx context.Context, pool *pgxpool.Pool, itemID int, tr *TranscriptResponse) error {
+func persist(ctx context.Context, pool *pgxpool.Pool, itemID int, lang string, tr *TranscriptResponse) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -191,7 +195,7 @@ func persist(ctx context.Context, pool *pgxpool.Pool, itemID int, tr *Transcript
 				if cached, ok := lemmaCache[norm]; ok {
 					lemma = cached
 				} else {
-					lemma = resolveLemmaTx(ctx, tx, norm)
+					lemma = resolveLemmaTx(ctx, tx, lang, norm)
 					lemmaCache[norm] = lemma
 				}
 			}
@@ -224,12 +228,12 @@ func persist(ctx context.Context, pool *pgxpool.Pool, itemID int, tr *Transcript
 // preserved at lookup time (the API returns every candidate); this field is
 // only a fast path, so prefer an exact self-match and otherwise take the
 // alphabetically first candidate for determinism.
-func resolveLemmaTx(ctx context.Context, tx pgx.Tx, norm string) any {
+func resolveLemmaTx(ctx context.Context, tx pgx.Tx, lang, norm string) any {
 	rows, err := tx.Query(ctx, `
-		SELECT lemma FROM forms WHERE form = $1
+		SELECT lemma FROM forms WHERE language_code = $2 AND form = $1
 		UNION
-		SELECT lemma FROM lexemes WHERE lemma = $1
-		ORDER BY 1`, norm)
+		SELECT lemma FROM lexemes WHERE language_code = $2 AND lemma = $1
+		ORDER BY 1`, norm, lang)
 	if err != nil {
 		return nil
 	}
@@ -251,6 +255,18 @@ func resolveLemmaTx(ctx context.Context, tx pgx.Tx, norm string) any {
 		}
 	}
 	return candidates[0]
+}
+
+// itemLanguage returns the language code an item's content is in.
+func itemLanguage(ctx context.Context, pool *pgxpool.Pool, itemID int) string {
+	var code string
+	err := pool.QueryRow(ctx, `
+		SELECT s.language_code FROM items i
+		JOIN sources s ON s.id = i.source_id WHERE i.id = $1`, itemID).Scan(&code)
+	if err != nil || code == "" {
+		return lexicon.DefaultLanguage
+	}
+	return code
 }
 
 // toMS converts float seconds to integer milliseconds.

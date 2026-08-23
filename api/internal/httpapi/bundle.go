@@ -77,18 +77,23 @@ func (s *Server) getBundle(w http.ResponseWriter, r *http.Request) {
 // its candidate lemmas and their definitions, in a single round trip.
 func (s *Server) definitionsForItem(r *http.Request, id int) (map[string][]lexicon.Candidate, error) {
 	rows, err := s.pool.Query(r.Context(), `
-		WITH item_forms AS (
+		WITH lang AS (
+		  SELECT s.language_code AS code FROM items i
+		  JOIN sources s ON s.id = i.source_id WHERE i.id = $1
+		), item_forms AS (
 		  SELECT DISTINCT normalized FROM tokens
 		  WHERE item_id = $1 AND is_word AND normalized <> ''
 		)
 		SELECT f.normalized, l.lemma, COALESCE(l.pos,''), l.origin, l.definitions
 		FROM item_forms f
-		JOIN forms fm ON fm.form = f.normalized
-		JOIN lexemes l ON l.lemma = fm.lemma
+		CROSS JOIN lang
+		JOIN forms fm ON fm.form = f.normalized AND fm.language_code = lang.code
+		JOIN lexemes l ON l.lemma = fm.lemma AND l.language_code = lang.code
 		UNION
 		SELECT f.normalized, l.lemma, COALESCE(l.pos,''), l.origin, l.definitions
 		FROM item_forms f
-		JOIN lexemes l ON l.lemma = f.normalized
+		CROSS JOIN lang
+		JOIN lexemes l ON l.lemma = f.normalized AND l.language_code = lang.code
 		ORDER BY 1, 2, 3`, id)
 	if err != nil {
 		return nil, err

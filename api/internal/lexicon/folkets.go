@@ -54,7 +54,7 @@ type folketsWord struct {
 // ImportFolkets parses the Folkets XML into lexemes, and additionally harvests
 // its <paradigm><inflection> lists into forms. Folkets covers ~19k paradigms;
 // SALDO covers far more, but this makes the dictionary useful on its own.
-func ImportFolkets(ctx context.Context, pool *pgxpool.Pool, path string) error {
+func ImportFolkets(ctx context.Context, pool *pgxpool.Pool, lang, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -127,7 +127,7 @@ func ImportFolkets(ctx context.Context, pool *pgxpool.Pool, path string) error {
 				continue
 			}
 			seenForm[dedupe] = true
-			formRows = append(formRows, []any{form, lemma, nullable(w.Class)})
+			formRows = append(formRows, []any{lang, form, lemma, nullable(w.Class)})
 		}
 	}
 
@@ -137,7 +137,7 @@ func ImportFolkets(ctx context.Context, pool *pgxpool.Pool, path string) error {
 		if err != nil {
 			return err
 		}
-		lexRows = append(lexRows, []any{k.lemma, nullable(k.pos), blob, "folkets"})
+		lexRows = append(lexRows, []any{lang, k.lemma, nullable(k.pos), blob, "folkets"})
 	}
 
 	if err := copyLexemes(ctx, pool, lexRows); err != nil {
@@ -146,8 +146,21 @@ func ImportFolkets(ctx context.Context, pool *pgxpool.Pool, path string) error {
 	if err := CopyForms(ctx, pool, formRows); err != nil {
 		return err
 	}
-	log.Printf("folkets: %d words -> %d lexemes, %d forms", words, len(lexRows), len(formRows))
+	log.Printf("folkets: %d words -> %d lexemes, %d forms (%s)", words, len(lexRows), len(formRows), lang)
 	return nil
+}
+
+// FolketsProvider adapts the Folkets importer to the DictionaryProvider
+// interface so a second language only has to supply its own implementation.
+type FolketsProvider struct{}
+
+func (FolketsProvider) SourceURL() string { return FolketsURL }
+func (FolketsProvider) CacheName() string { return "folkets.xml" }
+func (FolketsProvider) Attribution() string {
+	return "Folkets lexikon (KTH/CSC), CC BY-SA 2.5"
+}
+func (FolketsProvider) Import(ctx context.Context, pool *pgxpool.Pool, lang, path string) error {
+	return ImportFolkets(ctx, pool, lang, path)
 }
 
 // unescapeEntities undoes Folkets' double-encoded entities. The dump contains

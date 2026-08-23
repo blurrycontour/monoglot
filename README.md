@@ -129,6 +129,30 @@ work on a bus with no signal.
 Note: transcription and the Android build are both disk-hungry. Keep several GB
 free; `docker builder prune -af` reclaims the most.
 
+## Multi-language
+
+Swedish is the only language wired up, but the schema and API are already
+per-language: `language_code` scopes sources, dictionary, morphology and
+vocabulary, and `languages` holds each language's ASR hint.
+
+Adding a language means implementing `lexicon.DictionaryProvider` and
+`lexicon.MorphologyProvider` and registering them in
+`api/internal/lexicon/register.go`. No schema migration required.
+
+## Managing storage
+
+The **System** tab shows what is finished, what is in progress, and what is
+using disk, broken down per source.
+
+Two independent things use space:
+
+- **Server** — audio and transcripts. "Free up space from old episodes" removes
+  them for episodes older than a chosen window. The episode stays in the
+  library and can be fetched again on demand; anything you have started is
+  skipped.
+- **Phone** — offline downloads, managed with the **Save** button on each
+  episode and cleared in bulk from the System tab.
+
 ## Deliberately not built
 
 Spaced repetition (export to Anki instead), pronunciation scoring, speech input,

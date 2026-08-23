@@ -62,6 +62,9 @@ def get_model() -> WhisperModel:
 
 class TranscribeRequest(BaseModel):
     audio_path: str
+    # ASR language hint, supplied per item by the API. Defaults to Swedish
+    # since that is what this instance ships with.
+    language: str = "sv"
 
 
 @app.get("/health")
@@ -93,7 +96,7 @@ def transcribe(req: TranscribeRequest):
     with _transcribe_lock:
         segments, info = model.transcribe(
             req.audio_path,
-            language="sv",
+            language=req.language or "sv",
             beam_size=BEAM_SIZE,
             word_timestamps=True,
             # Klartext is clean studio speech with pauses between news items.
@@ -126,8 +129,8 @@ def transcribe(req: TranscribeRequest):
     elapsed = time.time() - t0
     n_words = sum(len(s["words"]) for s in out_segments)
     log.info(
-        "transcribed %s: %d segments, %d words, %.1fs audio in %.1fs (%.1fx)",
-        req.audio_path, len(out_segments), n_words,
+        "transcribed %s [%s]: %d segments, %d words, %.1fs audio in %.1fs (%.1fx)",
+        req.audio_path, req.language, len(out_segments), n_words,
         info.duration, elapsed, info.duration / elapsed if elapsed else 0,
     )
 

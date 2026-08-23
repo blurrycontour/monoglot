@@ -110,7 +110,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen() {
     val vm: SettingsViewModel = viewModel()
     val state by vm.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
@@ -124,11 +124,8 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
-                },
+            LargeTopAppBar(
+                title = { Text("Settings", fontWeight = FontWeight.SemiBold) },
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
@@ -191,35 +188,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            HorizontalDivider()
-            SectionTitle("Sources")
-            state.sources.forEach { source ->
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(source.name)
-                        Text("${source.itemCount} ready",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Switch(checked = source.enabled, onCheckedChange = { vm.toggleSource(source) })
-                }
-            }
-            OutlinedButton(onClick = { vm.triggerIngest() }, modifier = Modifier.fillMaxWidth()) {
-                Text("Fetch new episodes now")
-            }
-
-            HorizontalDivider()
-            SectionTitle("Offline")
-            Text(
-                "${state.downloadCount} downloaded · ${formatBytes(state.storageBytes)}",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            OutlinedButton(onClick = { vm.clearDownloads() }, modifier = Modifier.fillMaxWidth()) {
-                Text("Clear downloads")
-            }
+            // Sources, storage and ingestion live on the System screen, which is
+            // where the numbers that justify those actions already are.
 
             HorizontalDivider()
             AboutSection()

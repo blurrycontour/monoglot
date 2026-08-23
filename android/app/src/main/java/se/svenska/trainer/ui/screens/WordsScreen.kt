@@ -66,7 +66,7 @@ class WordsViewModel(app: Application) : AndroidViewModel(app) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WordsScreen(onBack: () -> Unit) {
+fun WordsScreen() {
     val vm: WordsViewModel = viewModel()
     val words by vm.words.collectAsState()
     val filter by vm.filter.collectAsState()
@@ -76,11 +76,8 @@ fun WordsScreen(onBack: () -> Unit) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Words") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
-                },
+            LargeTopAppBar(
+                title = { Text("Words", fontWeight = FontWeight.SemiBold) },
                 actions = {
                     IconButton(onClick = {
                         scope.launch {

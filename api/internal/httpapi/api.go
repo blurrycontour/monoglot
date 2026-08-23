@@ -58,6 +58,11 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/api/export/anki", s.exportAnki)
 
 		r.Get("/api/status", s.pipelineStatus)
+		r.Get("/api/system", s.systemInfo)
+		r.Get("/api/languages", s.listLanguages)
+		r.Post("/api/items/{id}/archive", s.archiveItem)
+		r.Post("/api/items/{id}/restore", s.restoreItem)
+		r.Post("/api/admin/cleanup", s.cleanup)
 		r.Get("/api/sources", s.listSources)
 		r.Post("/api/sources/{id}/enabled", s.setSourceEnabled)
 		r.Post("/api/admin/ingest", s.triggerIngest)

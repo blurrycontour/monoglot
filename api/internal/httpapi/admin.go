@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/adityasingh/svenska/api/internal/lexicon"
 )
 
 type SourceRow struct {
@@ -68,6 +70,15 @@ func (s *Server) triggerIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
+}
+
+func (s *Server) listLanguages(w http.ResponseWriter, r *http.Request) {
+	langs, err := lexicon.Languages(r.Context(), s.pool)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"languages": langs})
 }
 
 func contextWithTimeout(d time.Duration) (context.Context, context.CancelFunc) {

@@ -48,21 +48,31 @@ func main() {
 	case "import-dictionary":
 		pool := mustConnect(ctx, cfg)
 		defer pool.Close()
-		if alreadyImported(ctx, pool, "lexemes", "origin = 'folkets'") {
+		lang := langArg()
+		p, ok := lexicon.Dictionary(lang)
+		if !ok {
+			log.Fatalf("import-dictionary: no dictionary provider registered for %q", lang)
+		}
+		if alreadyImported(ctx, pool, "lexemes", "language_code = '"+lang+"' AND origin = 'folkets'") {
 			return
 		}
-		path := mustFetch(ctx, lexicon.FolketsURL, "folkets.xml", localPath(2))
-		if err := lexicon.ImportFolkets(ctx, pool, path); err != nil {
+		path := mustFetch(ctx, p.SourceURL(), p.CacheName(), localPath(2))
+		if err := p.Import(ctx, pool, lang, path); err != nil {
 			log.Fatalf("import-dictionary: %v", err)
 		}
 	case "import-morphology":
 		pool := mustConnect(ctx, cfg)
 		defer pool.Close()
-		if alreadyImported(ctx, pool, "forms", "") {
+		lang := langArg()
+		p, ok := lexicon.Morphology(lang)
+		if !ok {
+			log.Fatalf("import-morphology: no morphology provider registered for %q", lang)
+		}
+		if alreadyImported(ctx, pool, "forms", "language_code = '"+lang+"'") {
 			return
 		}
-		path := mustFetch(ctx, lexicon.SaldoURL, "saldom.xml", localPath(2))
-		if err := lexicon.ImportSaldo(ctx, pool, path); err != nil {
+		path := mustFetch(ctx, p.SourceURL(), p.CacheName(), localPath(2))
+		if err := p.Import(ctx, pool, lang, path); err != nil {
 			log.Fatalf("import-morphology: %v", err)
 		}
 	case "ingest":
@@ -143,6 +153,17 @@ func hasFlag(name string) bool {
 		}
 	}
 	return false
+}
+
+// langArg reads --lang=xx, defaulting to the single language this instance
+// currently ships with.
+func langArg() string {
+	for _, a := range os.Args[1:] {
+		if strings.HasPrefix(a, "--lang=") {
+			return strings.TrimPrefix(a, "--lang=")
+		}
+	}
+	return lexicon.DefaultLanguage
 }
 
 // localPath returns a positional path override, ignoring flags.
