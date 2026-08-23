@@ -6,9 +6,15 @@
 android/release.keystore
 android/keystore.properties
 
-# Content, audio, models and generated artefacts
-data/
-models/
+# Content, audio, models and generated artefacts.
+#
+# Anchored with a leading slash on purpose: an unanchored `data/` matches a
+# directory of that name at ANY depth, which silently excluded the app's own
+# `.../se/svenska/trainer/data/` package from git. A clean checkout then did
+# not compile. Keep new entries anchored unless they are genuinely meant to
+# match everywhere.
+/data/
+/models/
 *.apk
 *.log
 
@@ -23,6 +29,12 @@ android/.kotlin/
 # Python
 __pycache__/
 *.pyc
+.venv/
+
+# Editors
+.idea/
+*.iml
+.DS_Store
 
 # Local tool state
 .claude/settings.local.json

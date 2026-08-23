@@ -223,33 +223,15 @@ fun SystemScreen() {
             }
 
             info?.let { sys ->
-                if (sys.host.available) {
-                    SectionCard("Server host") {
-                        StatRow(
-                            "Memory",
-                            "%.0f%% of %.1f GB".format(
-                                sys.host.memUsedPercent,
-                                sys.host.memTotalBytes / 1e9,
-                            ),
-                        )
-                        StatRow("Free memory", formatBytesShort(sys.host.memAvailableBytes))
-                        StatRow("CPU", "%.0f%% of %d cores".format(sys.host.cpuPercent, sys.host.cpuCores))
-                        StatRow("Load (1 min)", "%.2f".format(sys.host.load1))
-                        Text(
-                            "Read from /proc. These are the machine's totals, not just " +
-                                "Monoglot's share.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
-                    }
-                }
-
-                if (sys.host.containers.isNotEmpty()) {
-                    SectionCard("Monoglot containers") {
-                        sys.host.containers.forEachIndexed { i, c ->
+                if (sys.containers.isNotEmpty()) {
+                    SectionCard("Containers") {
+                        sys.containers.forEachIndexed { i, c ->
                             if (i > 0) Spacer(Modifier.height(10.dp))
                             ContainerRow(c)
+                        }
+                        sys.containers.firstOrNull { it.memLimit > 0 }?.let {
+                            Spacer(Modifier.height(10.dp))
+                            StatRow("Memory available", formatBytesShort(it.memLimit))
                         }
                         Text(
                             "From the Docker socket, mounted read-only. Whisper is the " +

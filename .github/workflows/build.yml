@@ -1,0 +1,91 @@
+name: build
+
+# Artifacts only: no tags, no releases, no publishing anywhere. This exists to
+# prove a clean checkout still compiles — which it did not, for a while, because
+# an unanchored data/ in .gitignore had swallowed a whole Kotlin package.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: api/go.sum
+
+      # GOWORK=off matches the local rule: a parent go.work otherwise captures
+      # this module. Harmless here, kept so CI and a laptop run the same thing.
+      - name: Test
+        working-directory: api
+        env:
+          GOWORK: "off"
+        run: go test ./...
+
+      - name: Build images
+        run: docker compose build api worker
+
+      # docker save, not a registry push: this is a personal instance and the
+      # images are only ever built on the host that runs them.
+      # Image names come from the compose project, which is the checkout
+      # directory name; ask compose rather than hard-coding it.
+      - name: Export images
+        run: |
+          mkdir -p out
+          docker save $(docker compose config --images | tr '\n' ' ') \
+            | gzip > out/images.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-images
+          path: out/images.tar.gz
+          retention-days: 14
+
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The signing key is what makes an in-place update possible: Android
+      # identifies an app by (applicationId, signing key). Without the secrets
+      # this job still builds, but produces a debug APK that can only be
+      # installed fresh — it can never update the app on your phone.
+      - name: Restore signing key
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE" | base64 -d > android/release.keystore
+          cat > android/keystore.properties <<EOF
+          storeFile=release.keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          chmod 600 android/release.keystore android/keystore.properties
+          echo "TASK=assembleRelease" >> "$GITHUB_ENV"
+
+      - name: Choose task
+        run: echo "TASK=${TASK:-assembleDebug}" >> "$GITHUB_ENV"
+
+      # Same container the local build uses, so CI cannot pass on a toolchain
+      # the host does not have. There is no Gradle wrapper in the tree by
+      # design; the image supplies Gradle and the SDK.
+      - name: Build APK
+        run: scripts/android.sh "$TASK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monoglot-apk
+          path: android/app/build/outputs/apk/**/*.apk
+          retention-days: 14
+          if-no-files-found: error

@@ -64,7 +64,10 @@ type SystemInfo struct {
 		Lookups  int `json:"lookups"`
 	} `json:"vocabulary"`
 
-	Host HostStats `json:"host"`
+	// Per-container CPU and memory. Machine-wide /proc figures used to sit
+	// here too, but inside a container they describe the hypervisor's box, not
+	// this service, and answered nothing the per-container view does not.
+	Containers []ContainerStat `json:"containers"`
 
 	Languages     []lexicon.Language `json:"languages"`
 	IngestRunning bool               `json:"ingest_running"`
@@ -157,7 +160,7 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 	info.Storage.TotalBytes = info.Storage.AudioBytes + info.Storage.RawBytes +
 		info.Storage.CacheBytes + info.Storage.APKBytes
 	info.Storage.DiskFree = diskFree(s.cfg.AudioDir)
-	info.Host = readHostStats(ctx)
+	info.Containers = readContainerStats(ctx)
 
 	info.Storage.DatabaseSize = db.FileSize(s.cfg.DatabasePath)
 	s.pool.QueryRowContext(ctx, `SELECT count(*) FROM lexemes`).Scan(&info.Lexicon.Lexemes)
