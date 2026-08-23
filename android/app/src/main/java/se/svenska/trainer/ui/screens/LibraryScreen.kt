@@ -78,10 +78,14 @@ data class LibraryState(
     /** How many items were in flight when this batch started, so progress can
      *  be shown as a fraction rather than a spinner that never moves. */
     val batchTotal: Int = 0,
-    /** Items known to the server but never fetched, revealed by "Show more". */
+    /** Items known to the server but never fetched, revealed by "Show more".
+     *  Held per source filter, since the list is source-specific. */
     val archived: List<ItemSummary> = emptyList(),
-    val archivedShown: Int = 0,
+    val loadingMore: Boolean = false,
+    val moreExhausted: Boolean = false,
     val fetchingIds: Set<Int> = emptySet(),
+    /** Whether the current source has any never-fetched items at all. */
+    val hasArchive: Boolean = false,
 )
 
 class LibraryViewModel(app: Application) : AndroidViewModel(app) {
@@ -132,7 +136,11 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = _state.value.copy(sources = it.sources)
         }
         val status = runCatching { repo.api.status() }.getOrNull() ?: return
-        _state.value = _state.value.copy(status = status, batchTotal = batchTotalFor(status))
+        _state.value = _state.value.copy(
+            status = status,
+            batchTotal = batchTotalFor(status),
+            hasArchive = _state.value.hasArchive || probeArchived(_state.value.sourceFilter),
+        )
         if (status.processing > 0 || status.ingestRunning) startPolling() else stopPolling()
     }
 
@@ -169,8 +177,16 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         // Deliberately not refresh(): that sets `refreshing`, which is what
         // PullToRefreshBox renders its indicator from, so tapping a chip
         // looked like a half-completed pull gesture.
-        _state.value = _state.value.copy(sourceFilter = slug, loading = true)
+        //
+        // The revealed archive is reset too: it belongs to the previous
+        // source, and leaving it in place showed one source's back catalogue
+        // under another's heading.
+        _state.value = _state.value.copy(
+            sourceFilter = slug, loading = true,
+            archived = emptyList(), moreExhausted = false,
+        )
         viewModelScope.launch {
+            _state.value = _state.value.copy(hasArchive = probeArchived(slug))
             repo.items(slug).onSuccess { items ->
                 val downloaded = repo.offline.downloads.all().map { it.itemId }.toSet()
                 _state.value = _state.value.copy(
@@ -219,17 +235,28 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
      *  downloaded: fetching one is an explicit choice, because it costs a
      *  download and a minute of transcription. */
     fun showMore() {
+        if (_state.value.loadingMore) return
         viewModelScope.launch {
-            if (_state.value.archived.isEmpty()) {
-                runCatching { repo.api.archivedItems(_state.value.sourceFilter) }
-                    .onSuccess { _state.value = _state.value.copy(archived = it) }
-            }
+            _state.value = _state.value.copy(loadingMore = true)
+            val offset = _state.value.archived.size
+            val page = runCatching {
+                repo.api.archivedItems(_state.value.sourceFilter, offset = offset, limit = 10)
+            }.getOrDefault(emptyList())
+
             _state.value = _state.value.copy(
-                archivedShown = (_state.value.archivedShown + 10)
-                    .coerceAtMost(_state.value.archived.size),
+                archived = _state.value.archived + page,
+                loadingMore = false,
+                // A short page means the source has nothing further.
+                moreExhausted = page.size < 10,
             )
         }
     }
+
+    /** Whether this source has anything left to reveal. Checked once per
+     *  source so the button is not offered where it would do nothing. */
+    private suspend fun probeArchived(slug: String?): Boolean =
+        runCatching { repo.api.archivedItems(slug, offset = 0, limit = 1).isNotEmpty() }
+            .getOrDefault(false)
 
     /** Queues a never-fetched item for download and transcription. */
     fun fetch(item: ItemSummary) {
@@ -307,7 +334,11 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
                 }
             }
         },
+        // contentColorFor(Transparent) is Unspecified, which leaves
+        // LocalContentColor at its black default. Every piece of unstyled text
+        // on the screen would otherwise be black regardless of theme.
         containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onBackground,
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             // Outside the pull-to-refresh region on purpose: a horizontal swipe
@@ -362,12 +393,11 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
                             }
                         }
 
-                        val shown = state.archived.take(state.archivedShown)
-                        if (shown.isNotEmpty()) {
+                        if (state.archived.isNotEmpty()) {
                             stickyHeader(key = "h-notfetched") {
                                 SectionHeader("Not fetched", state.archived.size)
                             }
-                            items(shown, key = { "a-${it.id}" }) { item ->
+                            items(state.archived, key = { "a-${it.id}" }) { item ->
                                 ArchivedCard(
                                     item = item,
                                     busy = item.id in state.fetchingIds,
@@ -377,11 +407,10 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
                             }
                         }
 
-                        if (state.archivedShown < (state.archived.size.takeIf { it > 0 } ?: Int.MAX_VALUE)) {
+                        if (state.hasArchive && !state.moreExhausted) {
                             item(key = "showmore") {
                                 ShowMoreButton(
-                                    remaining = if (state.archived.isEmpty()) null
-                                                else state.archived.size - state.archivedShown,
+                                    loading = state.loadingMore,
                                     onClick = { vm.showMore() },
                                 )
                             }
@@ -819,12 +848,18 @@ private fun ArchivedCard(
 }
 
 @Composable
-private fun ShowMoreButton(remaining: Int?, onClick: () -> Unit) {
+private fun ShowMoreButton(loading: Boolean, onClick: () -> Unit) {
     Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-        OutlinedButton(onClick = onClick) {
-            Icon(Icons.Default.ExpandMore, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(if (remaining == null) "Show more" else "Show more  ($remaining)")
+        OutlinedButton(onClick = onClick, enabled = !loading) {
+            if (loading) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+                Text("Loading…")
+            } else {
+                Icon(Icons.Default.ExpandMore, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Show more")
+            }
         }
     }
 }

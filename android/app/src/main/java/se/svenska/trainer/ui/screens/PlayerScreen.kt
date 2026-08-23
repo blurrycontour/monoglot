@@ -46,9 +46,11 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
     DisposableEffect(Unit) { onDispose { vm.flushProgress() } }
 
     Scaffold(
-        // Transparent so the theme's background art shows through; the default
-        // paints an opaque surface over it.
+        // contentColorFor(Transparent) is Unspecified, which leaves
+        // LocalContentColor at its black default. Every piece of unstyled text
+        // on the screen would otherwise be black regardless of theme.
         containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onBackground,
         topBar = {
             TopAppBar(
                 title = {

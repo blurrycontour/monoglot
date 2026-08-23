@@ -55,6 +55,7 @@ fun RemindersSection() {
                         reminder.describe(),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                     if (reminder.label.isNotBlank()) {
                         Text(
@@ -179,11 +180,32 @@ private fun ReminderEditor(
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    TextButton(onClick = { days = (1..7).toSet() }) { Text("Every day") }
-                    TextButton(onClick = { days = (1..5).toSet() }) { Text("Weekdays") }
-                    TextButton(onClick = { days = setOf(6, 7) }) { Text("Weekends") }
+                Spacer(Modifier.height(10.dp))
+                // Equal weights with single-line labels: as TextButtons these
+                // wrapped, and "Weekends" broke across two lines on a narrow
+                // screen.
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    listOf(
+                        "All" to (1..7).toSet(),
+                        "Mon-Fri" to (1..5).toSet(),
+                        "Sat-Sun" to setOf(6, 7),
+                    ).forEach { (label, set) ->
+                        OutlinedButton(
+                            onClick = { days = set },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                        ) {
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        }
+                    }
                 }
 
                 if (days.isEmpty()) {

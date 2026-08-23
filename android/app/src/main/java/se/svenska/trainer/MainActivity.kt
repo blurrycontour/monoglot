@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -136,7 +137,11 @@ fun App() {
     UpdateGate()
 
     Scaffold(
+        // contentColorFor(Transparent) is Unspecified, which leaves
+        // LocalContentColor at its black default. Every piece of unstyled text
+        // on the screen would otherwise be black regardless of theme.
         containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onBackground,
         bottomBar = {
             AnimatedVisibility(
                 visible = showBar,
@@ -151,7 +156,7 @@ fun App() {
                         now = now,
                         onExpand = { nav.navigate("player/${now.itemId}") },
                     )
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(4.dp))
                 NavigationBar {
                     TABS.forEachIndexed { index, tab ->
                         NavigationBarItem(

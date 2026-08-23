@@ -61,9 +61,10 @@ type SystemInfo struct {
 		Total    int `json:"total"`
 		Known    int `json:"known"`
 		Learning int `json:"learning"`
-		Unknown  int `json:"unknown"`
 		Lookups  int `json:"lookups"`
 	} `json:"vocabulary"`
+
+	Host HostStats `json:"host"`
 
 	Languages     []lexicon.Language `json:"languages"`
 	IngestRunning bool               `json:"ingest_running"`
@@ -156,6 +157,7 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 	info.Storage.TotalBytes = info.Storage.AudioBytes + info.Storage.RawBytes +
 		info.Storage.CacheBytes + info.Storage.APKBytes
 	info.Storage.DiskFree = diskFree(s.cfg.AudioDir)
+	info.Host = readHostStats()
 
 	info.Storage.DatabaseSize = db.FileSize(s.cfg.DatabasePath)
 	s.pool.QueryRowContext(ctx, `SELECT count(*) FROM lexemes`).Scan(&info.Lexicon.Lexemes)
@@ -163,10 +165,9 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 	s.pool.QueryRowContext(ctx, `
 		SELECT count(*),
 		  count(*) FILTER (WHERE status='known'),
-		  count(*) FILTER (WHERE status='learning'),
-		  count(*) FILTER (WHERE status='unknown')
+		  count(*) FILTER (WHERE status='learning')
 		FROM user_words`).Scan(&info.Vocabulary.Total, &info.Vocabulary.Known,
-		&info.Vocabulary.Learning, &info.Vocabulary.Unknown)
+		&info.Vocabulary.Learning)
 	s.pool.QueryRowContext(ctx, `SELECT count(*) FROM lookups`).Scan(&info.Vocabulary.Lookups)
 	s.pool.QueryRowContext(ctx, `SELECT COALESCE(sum(position_ms),0) FROM progress`).
 		Scan(&info.ListenedMs)

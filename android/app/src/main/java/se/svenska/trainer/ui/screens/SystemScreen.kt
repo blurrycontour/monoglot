@@ -112,9 +112,11 @@ fun SystemScreen() {
     }
 
     Scaffold(
-        // Transparent so the theme's background art shows through; the default
-        // paints an opaque surface over it.
+        // contentColorFor(Transparent) is Unspecified, which leaves
+        // LocalContentColor at its black default. Every piece of unstyled text
+        // on the screen would otherwise be black regardless of theme.
         containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onBackground,
         topBar = { MonoglotTopBar(title = "System") },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
@@ -153,7 +155,7 @@ fun SystemScreen() {
                     StatRow("In progress", "${sys.items.started}")
                     StatRow("Time listened", formatHours(sys.listenedMs))
                     StatRow("Words looked up", "${sys.vocabulary.lookups}")
-                    StatRow("Marked known", "${sys.vocabulary.known}")
+                    StatRow("Known", "${sys.vocabulary.known}")
                     StatRow("Learning", "${sys.vocabulary.learning}")
                 }
 
@@ -214,6 +216,28 @@ fun SystemScreen() {
             }
 
             info?.let { sys ->
+                if (sys.host.available) {
+                    SectionCard("Server host") {
+                        StatRow(
+                            "Memory",
+                            "%.0f%% of %.1f GB".format(
+                                sys.host.memUsedPercent,
+                                sys.host.memTotalBytes / 1e9,
+                            ),
+                        )
+                        StatRow("Free memory", formatBytesShort(sys.host.memAvailableBytes))
+                        StatRow("CPU", "%.0f%% of %d cores".format(sys.host.cpuPercent, sys.host.cpuCores))
+                        StatRow("Load (1 min)", "%.2f".format(sys.host.load1))
+                        Text(
+                            "Read from /proc. These are the machine's totals, not just " +
+                                "Monoglot's share.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                }
+
                 SectionCard("Dictionary") {
                     StatRow("Definitions", "%,d".format(sys.lexicon.lexemes))
                     StatRow("Word forms", "%,d".format(sys.lexicon.forms))

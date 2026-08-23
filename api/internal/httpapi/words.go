@@ -73,7 +73,7 @@ func (s *Server) recordLookup(lang string, itemID, tokenID int, res lexicon.Resu
 	// Touch the vocabulary row so the Words screen reflects real usage.
 	s.pool.ExecContext(ctx, `
 		INSERT INTO user_words (language_code, lemma, status, lookup_count)
-		VALUES (?, ?, 'unknown', 1)
+		VALUES (?, ?, 'learning', 1)
 		ON CONFLICT (language_code, lemma) DO UPDATE SET
 		  lookup_count = user_words.lookup_count + 1,
 		  last_seen = strftime('%Y-%m-%d %H:%M:%S','now')`, lang, lemma)
@@ -93,9 +93,9 @@ func (s *Server) postWordStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch body.Status {
-	case "unknown", "learning", "known":
+	case "learning", "known":
 	default:
-		badRequest(w, "status must be unknown, learning or known")
+		badRequest(w, "status must be learning or known")
 		return
 	}
 

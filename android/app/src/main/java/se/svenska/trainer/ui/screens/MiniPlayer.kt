@@ -52,10 +52,12 @@ fun MiniPlayer(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp)
-            .shadow(14.dp, RoundedCornerShape(16.dp), clip = false),
+            // Modest shadow: a large soft one reads as a pale band above the
+            // bar and visually eats content behind it.
+            .shadow(6.dp, RoundedCornerShape(14.dp), clip = false),
         color = MaterialTheme.colorScheme.primaryContainer,
         tonalElevation = 6.dp,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
     ) {
         Column {
@@ -69,17 +71,17 @@ fun MiniPlayer(
             Row(
                 Modifier
                     .clickable(onClick = onExpand)
-                    .padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                    .padding(start = 12.dp, end = 4.dp, top = 5.dp, bottom = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
                     Modifier
-                        .size(40.dp)
+                        .size(34.dp)
                         .clip(RoundedCornerShape(11.dp))
                         .background(MaterialTheme.colorScheme.primary),
                     contentAlignment = Alignment.Center,
                 ) {
-                    AppMark(Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                    AppMark(Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onPrimary)
                 }
                 Spacer(Modifier.width(11.dp))
                 Column(Modifier.weight(1f)) {
@@ -104,7 +106,7 @@ fun MiniPlayer(
                 }
                 FilledIconButton(
                     onClick = { PlaybackHolder.playPause() },
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(36.dp),
                 ) {
                     Icon(
                         if (now.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
