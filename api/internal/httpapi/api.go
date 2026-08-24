@@ -72,6 +72,7 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/api/system", s.systemInfo)
 		r.Get("/api/languages", s.listLanguages)
 		r.Post("/api/items/{id}/archive", s.archiveItem)
+		r.Post("/api/items/{id}/cancel", s.cancelItem)
 		r.Post("/api/items/{id}/restore", s.restoreItem)
 		r.Post("/api/admin/cleanup", s.cleanup)
 		r.Get("/api/sources", s.listSources)

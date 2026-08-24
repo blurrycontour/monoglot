@@ -115,6 +115,21 @@ func transcribeItem(ctx context.Context, pool *sql.DB, workerURL, rawDir string,
 		}
 	}
 
+	// Cancellation is the only thing that can move an item out of
+	// 'transcribing' while the worker is thinking. Nothing can interrupt that
+	// request, so the check happens here instead: a result for an item that is
+	// no longer being transcribed is dropped rather than written back.
+	var current string
+	if err := pool.QueryRowContext(ctx,
+		`SELECT status FROM items WHERE id=?`, id).Scan(&current); err != nil {
+		return err
+	}
+	if current != "transcribing" {
+		log.Printf("transcribe item %d: cancelled while running (now %s), discarding result",
+			id, current)
+		return nil
+	}
+
 	return persist(ctx, pool, id, lang, resp)
 }
 

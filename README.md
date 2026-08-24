@@ -7,9 +7,10 @@ Built to the spec in [SPEC.md](SPEC.md).
 
 ## What it does
 
-Nightly, it pulls new episodes from four Swedish sources — **SR Klartext**,
-the **8 Sidor** daily news podcast, **Vetenskapsradion Nyheter** (daily science
-news), and **Forskning & Framsteg: Artiklar** (read magazine articles) — transcribes them with **KB-Whisper** (KBLab's Swedish-finetuned
+Nightly, it pulls new episodes from five Swedish sources — **SR Klartext**,
+the **8 Sidor** daily news podcast, **Vetenskapsradion Nyheter** (5 min daily
+science headlines), **Vetenskapsradion** (19 min daily, one subject per
+episode), and **Forskning & Framsteg: Artiklar** (read magazine articles) — transcribes them with **KB-Whisper** (KBLab's Swedish-finetuned
 Whisper) at word-level timestamps, resolves every word to a lemma via **SALDO**
 morphology, and warms **Folkets lexikon** definitions for the whole episode.
 
@@ -214,6 +215,7 @@ Adding a language means implementing `lexicon.DictionaryProvider` and
 | SR Klartext | SR API (493) | ~5 min daily news, slow and clear |
 | 8 Sidor | Acast-style RSS | daily news podcast, human read |
 | Vetenskapsradion Nyheter | SR API (406) | ~5 min daily science news |
+| Vetenskapsradion | SR API (412) | ~19 min daily science, one subject per episode |
 | Forskning & Framsteg: Artiklar | Acast RSS | ~9 min read articles. Archive: no new episodes since Feb 2024 |
 
 fof.se's own `/feed` carries articles with no audio, and the site embeds

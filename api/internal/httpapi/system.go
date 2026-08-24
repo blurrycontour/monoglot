@@ -1,6 +1,9 @@
 package httpapi
 
 import (
+	"database/sql"
+	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -220,6 +223,46 @@ func (s *Server) archiveItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "status": "archived"})
+}
+
+// cancelItem takes an episode out of the pipeline.
+//
+// Queued items simply stop being selected. The one being transcribed right now
+// cannot actually be stopped — the worker is mid-request and there is no way
+// to interrupt it — so it is marked archived and the transcriber discards the
+// result when it comes back rather than resurrecting the row.
+func (s *Server) cancelItem(w http.ResponseWriter, r *http.Request) {
+	id, err := intParam(r, "id")
+	if err != nil {
+		badRequest(w, "bad item id")
+		return
+	}
+	var status string
+	if err := s.pool.QueryRowContext(r.Context(),
+		`SELECT status FROM items WHERE id=?`, id).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		serverError(w, err)
+		return
+	}
+	switch status {
+	case "new", "downloading", "downloaded", "transcribing", "failed":
+	default:
+		badRequest(w, "only an unfinished episode can be cancelled")
+		return
+	}
+
+	if err := s.archive(r, id); err != nil {
+		serverError(w, err)
+		return
+	}
+	// attempts is reset so fetching it again later starts with a clean slate
+	// rather than one retry away from being given up on.
+	s.pool.ExecContext(r.Context(), `UPDATE items SET attempts=0, error=NULL WHERE id=?`, id)
+	log.Printf("cancel item %d (was %s)", id, status)
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "cancelled": status})
 }
 
 func (s *Server) archive(r *http.Request, id int) error {

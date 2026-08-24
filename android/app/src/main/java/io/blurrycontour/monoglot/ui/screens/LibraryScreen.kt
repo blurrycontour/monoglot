@@ -91,9 +91,15 @@ data class LibraryState(
     val loadingMore: Boolean = false,
     val moreExhausted: Boolean = false,
     val fetchingIds: Set<Int> = emptySet(),
+    val cancellingIds: Set<Int> = emptySet(),
     /** Whether the current source has any never-fetched items at all. */
     val hasArchive: Boolean = false,
 )
+
+/** How long the pull-to-refresh indicator stays up at minimum. A LAN round
+ *  trip is faster than the eye, and an indicator that never appears reads as a
+ *  gesture that did not register. */
+private const val MIN_REFRESH_MS = 550L
 
 class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = Graph.repository
@@ -115,6 +121,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refresh(initial: Boolean = false) {
         viewModelScope.launch {
+            // The indicator has to be on screen long enough to read as one.
+            // On a LAN the fetch finishes in well under a frame, so the
+            // gesture completed and nothing appeared to happen.
+            val started = System.currentTimeMillis()
             _state.value = _state.value.copy(
                 loading = initial && _state.value.items.isEmpty(),
                 refreshing = !initial,
@@ -125,15 +135,20 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             val downloaded = repo.offline.downloads.all().map { it.itemId }.toSet()
             _state.value = result.fold(
                 onSuccess = {
-                    _state.value.copy(loading = false, refreshing = false,
+                    _state.value.copy(loading = false,
                         items = it, downloadedIds = downloaded, error = null)
                 },
                 onFailure = {
-                    _state.value.copy(loading = false, refreshing = false,
+                    _state.value.copy(loading = false,
                         error = it.message ?: "Cannot reach server")
                 },
             )
             refreshMeta()
+            if (!initial) {
+                val elapsed = System.currentTimeMillis() - started
+                if (elapsed < MIN_REFRESH_MS) delay(MIN_REFRESH_MS - elapsed)
+                _state.value = _state.value.copy(refreshing = false)
+            }
         }
     }
 
@@ -307,11 +322,36 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Hides the revealed archive again. Nothing is undone on the server: the
+     *  list was only ever a view of what was already there. */
+    fun showLess() {
+        _state.value = _state.value.copy(archived = emptyList(), moreExhausted = false)
+    }
+
     /** Whether this source has anything left to reveal. Checked once per
      *  source so the button is not offered where it would do nothing. */
     private suspend fun probeArchived(slug: String?): Boolean =
         runCatching { repo.api.archivedItems(slug, offset = 0, limit = 1).isNotEmpty() }
             .getOrDefault(false)
+
+    /** Takes an episode out of the pipeline. It returns to the archive rather
+     *  than being deleted, so "Show more" can fetch it again. */
+    fun cancel(itemId: Int) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(
+                cancellingIds = _state.value.cancellingIds + itemId,
+            )
+            runCatching { repo.api.cancelItem(itemId) }
+            runCatching { repo.removeDownload(itemId) }
+            refreshMeta()
+            repo.items(_state.value.sourceFilter).onSuccess {
+                _state.value = _state.value.copy(items = it)
+            }
+            _state.value = _state.value.copy(
+                cancellingIds = _state.value.cancellingIds - itemId,
+            )
+        }
+    }
 
     /** Queues a never-fetched item for download and transcription. */
     fun fetch(item: ItemSummary) {
@@ -473,11 +513,16 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
                             }
                         }
 
-                        if (state.hasArchive && !state.moreExhausted) {
+                        if (state.hasArchive && !state.moreExhausted ||
+                            state.archived.isNotEmpty()
+                        ) {
                             item(key = "showmore") {
                                 ShowMoreButton(
                                     loading = state.loadingMore,
-                                    onClick = { vm.showMore() },
+                                    canShowMore = state.hasArchive && !state.moreExhausted,
+                                    canShowLess = state.archived.isNotEmpty(),
+                                    onMore = { vm.showMore() },
+                                    onLess = { vm.showLess() },
                                 )
                             }
                         }
@@ -492,6 +537,8 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
     if (queueSheet) {
         QueueSheet(
             items = state.status?.items.orEmpty(),
+            busy = state.cancellingIds,
+            onCancel = { vm.cancel(it) },
             onDismiss = { queueSheet = false },
         )
     }
@@ -906,17 +953,38 @@ private fun ArchivedCard(
 }
 
 @Composable
-private fun ShowMoreButton(loading: Boolean, onClick: () -> Unit) {
-    Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-        OutlinedButton(onClick = onClick, enabled = !loading) {
-            if (loading) {
-                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(10.dp))
-                Text("Loading…")
-            } else {
-                Icon(Icons.Default.ExpandMore, null, Modifier.size(18.dp))
+private fun ShowMoreButton(
+    loading: Boolean,
+    canShowMore: Boolean,
+    canShowLess: Boolean,
+    onMore: () -> Unit,
+    onLess: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(16.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        if (canShowMore) {
+            OutlinedButton(onClick = onMore, enabled = !loading) {
+                if (loading) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Loading…")
+                } else {
+                    Icon(Icons.Default.ExpandMore, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Show more")
+                }
+            }
+        }
+        // Revealing the back catalogue was one-way: the only way to put a
+        // hundred old episodes away again was to switch source and come back.
+        if (canShowLess) {
+            if (canShowMore) Spacer(Modifier.width(10.dp))
+            TextButton(onClick = onLess, enabled = !loading) {
+                Icon(Icons.Default.ExpandLess, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Show more")
+                Text("Show less")
             }
         }
     }
@@ -1069,7 +1137,12 @@ private fun EmptyState(filter: LibraryFilter) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun QueueSheet(items: List<PipelineItem>, onDismiss: () -> Unit) {
+private fun QueueSheet(
+    items: List<PipelineItem>,
+    busy: Set<Int>,
+    onCancel: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             Modifier
@@ -1140,6 +1213,23 @@ private fun QueueSheet(items: List<PipelineItem>, onDismiss: () -> Unit) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 3,
                                 overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    // Cancelling puts the episode back in the archive: it is
+                    // not lost, and Show more will fetch it again.
+                    if (item.id in busy) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    } else {
+                        IconButton(
+                            onClick = { onCancel(item.id) },
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Cancel",
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }

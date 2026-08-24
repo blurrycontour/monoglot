@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +46,7 @@ data class SystemState(
     val offlineCount: Int = 0,
     val message: String? = null,
     val busy: Boolean = false,
+    val refreshing: Boolean = false,
 )
 
 class SystemViewModel(app: Application) : AndroidViewModel(app) {
@@ -125,6 +127,19 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
         super.onCleared()
     }
 
+    /** Pull-to-refresh, with the indicator held long enough to be seen: the
+     *  fetch itself is a LAN round trip and finishes inside a frame. */
+    fun refresh() {
+        viewModelScope.launch {
+            val started = System.currentTimeMillis()
+            _state.value = _state.value.copy(refreshing = true)
+            load()
+            val elapsed = System.currentTimeMillis() - started
+            if (elapsed < 550L) delay(550L - elapsed)
+            _state.value = _state.value.copy(refreshing = false)
+        }
+    }
+
     fun cleanup(days: Int) {
         viewModelScope.launch {
             _state.value = _state.value.copy(busy = true)
@@ -200,138 +215,143 @@ fun SystemScreen(visible: Boolean = true) {
             return@Scaffold
         }
 
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        PullToRefreshBox(
+            isRefreshing = state.refreshing,
+            onRefresh = { vm.refresh() },
+            modifier = Modifier.fillMaxSize().padding(padding),
         ) {
-            val info = state.info
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                val info = state.info
 
-            if (state.bootstrap.running || state.bootstrap.error.isNotBlank()) {
-                BootstrapCard(state.bootstrap)
-            }
-
-            if (state.error != null && info == null) {
-                ServerErrorState(state.error!!, onRetry = { vm.load() })
-            }
-
-            info?.let { sys ->
-                // Listening progress, the number that actually reflects the point
-                // of the app.
-                SectionCard("Progress") {
-                    StatRow("Episodes finished", "${sys.items.completed}")
-                    StatRow("In progress", "${sys.items.started}")
-                    StatRow("Time listened", formatHours(sys.listenedMs))
-                    StatRow("Words looked up", "${sys.vocabulary.lookups}")
-                    StatRow("Known", "${sys.vocabulary.known}")
-                    StatRow("Learning", "${sys.vocabulary.learning}")
+                if (state.bootstrap.running || state.bootstrap.error.isNotBlank()) {
+                    BootstrapCard(state.bootstrap)
                 }
 
-                SectionCard("Sources") {
-                    sys.sources.forEach { source ->
-                        SourceBlock(source)
-                        if (source !== sys.sources.last()) {
-                            HorizontalDivider(Modifier.padding(vertical = 10.dp))
+                if (state.error != null && info == null) {
+                    ServerErrorState(state.error!!, onRetry = { vm.load() })
+                }
+
+                info?.let { sys ->
+                    // Listening progress, the number that actually reflects the point
+                    // of the app.
+                    SectionCard("Progress") {
+                        StatRow("Episodes finished", "${sys.items.completed}")
+                        StatRow("In progress", "${sys.items.started}")
+                        StatRow("Time listened", formatHours(sys.listenedMs))
+                        StatRow("Words looked up", "${sys.vocabulary.lookups}")
+                        StatRow("Known", "${sys.vocabulary.known}")
+                        StatRow("Learning", "${sys.vocabulary.learning}")
+                    }
+
+                    SectionCard("Sources") {
+                        sys.sources.forEach { source ->
+                            SourceBlock(source)
+                            if (source !== sys.sources.last()) {
+                                HorizontalDivider(Modifier.padding(vertical = 10.dp))
+                            }
                         }
                     }
-                }
 
-                SectionCard("Server storage") {
-                    StatRow("Audio", formatBytesShort(sys.storage.audioBytes))
-                    StatRow("Transcripts (raw)", formatBytesShort(sys.storage.rawBytes))
-                    StatRow("Dictionary downloads", formatBytesShort(sys.storage.cacheBytes))
-                    StatRow("Database", formatBytesShort(sys.storage.databaseBytes))
-                    StatRow("App package", formatBytesShort(sys.storage.apkBytes))
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    // The sum, so the figure that matters is not left to be
-                    // added up from five rows.
-                    StatRow(
-                        "Total used",
-                        formatBytesShort(sys.storage.totalBytes + sys.storage.databaseBytes),
-                        emphasise = true,
-                    )
-                    StatRow("Free on disk", formatBytesShort(sys.storage.diskFree))
+                    SectionCard("Server storage") {
+                        StatRow("Audio", formatBytesShort(sys.storage.audioBytes))
+                        StatRow("Transcripts (raw)", formatBytesShort(sys.storage.rawBytes))
+                        StatRow("Dictionary downloads", formatBytesShort(sys.storage.cacheBytes))
+                        StatRow("Database", formatBytesShort(sys.storage.databaseBytes))
+                        StatRow("App package", formatBytesShort(sys.storage.apkBytes))
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                        // The sum, so the figure that matters is not left to be
+                        // added up from five rows.
+                        StatRow(
+                            "Total used",
+                            formatBytesShort(sys.storage.totalBytes + sys.storage.databaseBytes),
+                            emphasise = true,
+                        )
+                        StatRow("Free on disk", formatBytesShort(sys.storage.diskFree))
 
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedButton(
-                        onClick = { cleanupDialog = true },
-                        enabled = !state.busy,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Default.DeleteSweep, null, Modifier.size(17.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Free up space from old episodes")
-                    }
-                    Text(
-                        "Removes audio and transcripts from the server. Episodes stay in " +
-                            "the library and can be fetched again. Anything you have started " +
-                            "is skipped.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                }
-            }
-
-            SectionCard("On this phone") {
-                StatRow("Downloaded episodes", "${state.offlineCount}")
-                StatRow("Storage used", formatBytesShort(state.offlineBytes))
-                Spacer(Modifier.height(12.dp))
-                OutlinedButton(
-                    onClick = { vm.clearDownloads() },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Clear offline downloads") }
-            }
-
-            info?.let { sys ->
-                if (sys.containers.isNotEmpty()) {
-                    SectionCard("Containers") {
-                        sys.containers.forEachIndexed { i, c ->
-                            if (i > 0) Spacer(Modifier.height(10.dp))
-                            ContainerRow(c)
-                        }
-                        sys.containers.firstOrNull { it.memLimit > 0 }?.let {
-                            Spacer(Modifier.height(10.dp))
-                            StatRow("Memory available", formatBytesShort(it.memLimit))
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = { cleanupDialog = true },
+                            enabled = !state.busy,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Default.DeleteSweep, null, Modifier.size(17.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Free up space from old episodes")
                         }
                         Text(
-                            "From the Docker socket, mounted read-only. Whisper is the " +
-                                "memory: the worker holds the model until it idles out.",
+                            "Removes audio and transcripts from the server. Episodes stay in " +
+                                "the library and can be fetched again. Anything you have started " +
+                                "is skipped.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 8.dp),
+                            modifier = Modifier.padding(top = 6.dp),
                         )
                     }
                 }
 
-                SectionCard("Dictionary") {
-                    StatRow("Definitions", "%,d".format(sys.lexicon.lexemes))
-                    StatRow("Word forms", "%,d".format(sys.lexicon.forms))
-                    sys.languages.forEach {
-                        StatRow("Language", "${it.name} (${it.nativeName})")
-                    }
+                SectionCard("On this phone") {
+                    StatRow("Downloaded episodes", "${state.offlineCount}")
+                    StatRow("Storage used", formatBytesShort(state.offlineBytes))
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = { vm.clearDownloads() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Clear offline downloads") }
                 }
 
-                Button(
-                    onClick = { vm.triggerIngest() },
-                    enabled = !sys.ingestRunning,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (sys.ingestRunning) {
-                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Fetching…")
-                    } else {
-                        Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Fetch new episodes")
+                info?.let { sys ->
+                    if (sys.containers.isNotEmpty()) {
+                        SectionCard("Containers") {
+                            sys.containers.forEachIndexed { i, c ->
+                                if (i > 0) Spacer(Modifier.height(10.dp))
+                                ContainerRow(c)
+                            }
+                            sys.containers.firstOrNull { it.memLimit > 0 }?.let {
+                                Spacer(Modifier.height(10.dp))
+                                StatRow("Memory available", formatBytesShort(it.memLimit))
+                            }
+                            Text(
+                                "From the Docker socket, mounted read-only. Whisper is the " +
+                                    "memory: the worker holds the model until it idles out.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                    }
+
+                    SectionCard("Dictionary") {
+                        StatRow("Definitions", "%,d".format(sys.lexicon.lexemes))
+                        StatRow("Word forms", "%,d".format(sys.lexicon.forms))
+                        sys.languages.forEach {
+                            StatRow("Language", "${it.name} (${it.nativeName})")
+                        }
+                    }
+
+                    Button(
+                        onClick = { vm.triggerIngest() },
+                        enabled = !sys.ingestRunning,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (sys.ingestRunning) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Text("Fetching…")
+                        } else {
+                            Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Fetch new episodes")
+                        }
                     }
                 }
+                Spacer(Modifier.height(16.dp))
             }
-            Spacer(Modifier.height(16.dp))
         }
     }
 

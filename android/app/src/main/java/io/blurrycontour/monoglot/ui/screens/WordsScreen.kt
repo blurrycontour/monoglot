@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +38,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import io.blurrycontour.monoglot.data.Candidate
 import io.blurrycontour.monoglot.data.Graph
@@ -83,6 +85,9 @@ class WordsViewModel(app: Application) : AndroidViewModel(app) {
     private val _loading = MutableStateFlow(true)
     val loading = _loading.asStateFlow()
 
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing = _refreshing.asStateFlow()
+
     init {
         load()
         // Everything held here belongs to one server; start over when it
@@ -100,24 +105,41 @@ class WordsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Pull-to-refresh. Same fetch, but the indicator is held on screen long
+     *  enough to be seen. */
+    fun refresh() {
+        viewModelScope.launch {
+            val started = System.currentTimeMillis()
+            _refreshing.value = true
+            fetch()
+            val elapsed = System.currentTimeMillis() - started
+            if (elapsed < 550L) delay(550L - elapsed)
+            _refreshing.value = false
+        }
+    }
+
     fun load() {
         viewModelScope.launch {
             _loading.value = true
-            runCatching { repo.api.words(null) }
-                .onSuccess {
-                    // Server orders by last_seen already; keep that. Sorting by
-                    // status would bury the words just looked up.
-                    _all.value = it
-                    _error.value = null
-                    applyFilter()
-                }
-                .onFailure {
-                    _error.value = it.message ?: "Cannot reach server"
-                    _all.value = emptyList()
-                    applyFilter()
-                }
+            fetch()
             _loading.value = false
         }
+    }
+
+    private suspend fun fetch() {
+        runCatching { repo.api.words(null) }
+            .onSuccess {
+                // Server orders by last_seen already; keep that. Sorting by
+                // status would bury the words just looked up.
+                _all.value = it
+                _error.value = null
+                applyFilter()
+            }
+            .onFailure {
+                _error.value = it.message ?: "Cannot reach server"
+                _all.value = emptyList()
+                applyFilter()
+            }
     }
 
     private fun applyFilter() {
@@ -194,6 +216,7 @@ fun WordsScreen(visible: Boolean = true) {
     val loading by vm.loading.collectAsState()
     val selected by vm.selected.collectAsState()
     val counts by vm.counts.collectAsState()
+    val refreshing by vm.refreshing.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -270,6 +293,11 @@ fun WordsScreen(visible: Boolean = true) {
                 }
             }
 
+            PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = { vm.refresh() },
+                modifier = Modifier.fillMaxSize(),
+            ) {
             when {
                 loading && words.isEmpty() ->
                     Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
@@ -312,6 +340,7 @@ fun WordsScreen(visible: Boolean = true) {
                         )
                     }
                 }
+            }
             }
         }
     }

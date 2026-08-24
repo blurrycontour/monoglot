@@ -130,6 +130,8 @@ class ApiClient(private val settings: SettingsStore) {
         return json.decodeFromString<ItemsResponse>(get(q)).items
     }
 
+    suspend fun cancelItem(itemId: Int) { post("/api/items/$itemId/cancel", "{}") }
+
     suspend fun resetProgress(itemId: Int) { post("/api/items/$itemId/progress/reset", "{}") }
 
     suspend fun deleteWords(lemmas: List<String>) {
