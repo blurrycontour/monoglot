@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -76,6 +77,10 @@ func TranscribePending(ctx context.Context, pool *sql.DB, workerURL, rawDir stri
 	for _, j := range jobs {
 		start := time.Now()
 		if err := transcribeItem(ctx, pool, workerURL, rawDir, j.id, j.path); err != nil {
+			if errors.Is(err, errSkip) {
+				log.Printf("transcribe item %d: skipped, no longer pending", j.id)
+				continue
+			}
 			log.Printf("ERROR transcribe item %d: %v", j.id, err)
 			markFailed(ctx, pool, j.id, err)
 			continue
@@ -85,7 +90,27 @@ func TranscribePending(ctx context.Context, pool *sql.DB, workerURL, rawDir stri
 	return nil
 }
 
+// errSkip means the item is no longer ours to work on. Not a failure: the row
+// changed under us, which is exactly what cancelling does.
+var errSkip = errors.New("no longer pending")
+
 func transcribeItem(ctx context.Context, pool *sql.DB, workerURL, rawDir string, id int, audioPath string) error {
+	// Re-read the row rather than trusting the batch. TranscribePending picks
+	// five jobs up front and then works through them one at a time, so by the
+	// time a job starts it may have been cancelled minutes ago — and cancelling
+	// deletes the audio, which turned into "no such file" from the worker and
+	// a 'failed' row that the retry logic then resurrected.
+	var status string
+	var path sql.NullString
+	if err := pool.QueryRowContext(ctx,
+		`SELECT status, audio_path FROM items WHERE id=?`, id).Scan(&status, &path); err != nil {
+		return err
+	}
+	if status != "downloaded" || !path.Valid || path.String == "" {
+		return errSkip
+	}
+	audioPath = path.String
+
 	// The item's language drives both the ASR hint and which dictionary the
 	// lemmatiser consults.
 	lang := itemLanguage(ctx, pool, id)

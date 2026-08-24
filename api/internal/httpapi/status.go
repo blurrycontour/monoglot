@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/blurrycontour/monoglot/api/internal/bootstrap"
@@ -44,6 +47,11 @@ type PipelineItem struct {
 	Status      string     `json:"status"`
 	Attempts    int        `json:"attempts"`
 	Error       string     `json:"error,omitempty"`
+	// 0..1 for the item being transcribed right now, read from the worker.
+	// Absent for everything else: only one job runs at a time.
+	Progress float64 `json:"progress,omitempty"`
+	// Seconds the current transcription has been running.
+	ElapsedSeconds float64 `json:"elapsed_seconds,omitempty"`
 }
 
 func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +115,7 @@ func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
+	s.attachWorkerProgress(r.Context(), out.Items)
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -147,4 +156,46 @@ func (s *Server) pipelineItems(r *http.Request, source string) ([]PipelineItem, 
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// attachWorkerProgress asks the worker how far into the current audio it has
+// got. One short request, and only when something is actually transcribing, so
+// a status poll on an idle instance costs nothing extra.
+func (s *Server) attachWorkerProgress(ctx context.Context, items []PipelineItem) {
+	idx := -1
+	for i := range items {
+		if items[i].Status == "transcribing" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 700*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		strings.TrimRight(s.cfg.WorkerURL, "/")+"/progress", nil)
+	if err != nil {
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+	var p struct {
+		Path     string  `json:"path"`
+		Fraction float64 `json:"fraction"`
+		Elapsed  float64 `json:"elapsed"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&p) != nil || p.Path == "" {
+		return
+	}
+	items[idx].Progress = p.Fraction
+	items[idx].ElapsedSeconds = p.Elapsed
 }

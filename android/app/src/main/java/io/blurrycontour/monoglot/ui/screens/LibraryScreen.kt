@@ -1158,8 +1158,10 @@ private fun QueueSheet(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "Transcription runs on the server, about a minute per five " +
-                    "minutes of audio. Failures are retried automatically.",
+                "Transcription runs on the server, about a minute per four " +
+                    "minutes of audio. Failures are retried automatically. " +
+                    "Cancelling puts an episode back in the archive — it is " +
+                    "still there under Show more, and can be fetched again.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1206,6 +1208,26 @@ private fun QueueSheet(
                                 MaterialTheme.colorScheme.error
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        // Real progress, read from the worker as it consumes
+                        // the audio, rather than a spinner that says only
+                        // "something is happening".
+                        if (item.status == "transcribing" && item.progress > 0f) {
+                            Spacer(Modifier.height(5.dp))
+                            LinearProgressIndicator(
+                                progress = { item.progress.coerceIn(0f, 1f) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(CircleShape),
+                            )
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                "${(item.progress * 100).toInt()}% · " +
+                                    "${item.elapsedSeconds.toInt()}s elapsed",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         if (item.error.isNotBlank()) {
                             Text(
                                 item.error,
@@ -1219,7 +1241,11 @@ private fun QueueSheet(
                     // Cancelling puts the episode back in the archive: it is
                     // not lost, and Show more will fetch it again.
                     if (item.id in busy) {
-                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        // Same 36dp box the button occupies, or the spinner
+                        // lands somewhere the button never was.
+                        Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        }
                     } else {
                         IconButton(
                             onClick = { onCancel(item.id) },

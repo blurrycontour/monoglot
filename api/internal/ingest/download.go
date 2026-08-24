@@ -197,9 +197,14 @@ func extFor(url string) string {
 	return ".mp3"
 }
 
+// markFailed records a stage failure, but never over a terminal state.
+//
+// Without the status guard a cancelled item was written back as 'failed', and
+// the retry logic then treated it as work to redo: cancelling did not stick.
 func markFailed(ctx context.Context, pool *sql.DB, id int, cause error) {
 	if _, err := pool.ExecContext(ctx,
-		`UPDATE items SET status='failed', error=? WHERE id=?`,
+		`UPDATE items SET status='failed', error=?
+		 WHERE id=? AND status NOT IN ('archived','ready')`,
 		cause.Error(), id); err != nil {
 		log.Printf("ERROR marking item %d failed: %v", id, err)
 	}

@@ -89,6 +89,26 @@ class TranscribeRequest(BaseModel):
     language: str = "sv"
 
 
+# Where the current transcription has got to, so the app can show a bar rather
+# than a spinner. faster-whisper hands back a generator, so this costs one
+# assignment per segment: the loop that builds the response is already walking
+# it, and nothing extra is computed.
+_progress: dict = {"path": None, "fraction": 0.0, "started": 0.0, "duration": 0.0}
+
+
+@app.get("/progress")
+def progress():
+    """What is being transcribed right now, and how far in.
+
+    Empty between jobs. Deliberately not per-item: the worker runs one
+    transcription at a time behind a lock, so there is only ever one answer.
+    """
+    p = dict(_progress)
+    if p["path"] and p["started"]:
+        p["elapsed"] = round(time.time() - p["started"], 1)
+    return p
+
+
 @app.get("/health")
 def health():
     return {
@@ -120,6 +140,10 @@ def transcribe(req: TranscribeRequest):
     t0 = time.time()
 
     with _transcribe_lock:
+        _progress.update({
+            "path": req.audio_path, "fraction": 0.0,
+            "started": time.time(), "duration": 0.0,
+        })
         segments, info = model.transcribe(
             req.audio_path,
             language=req.language or "sv",
@@ -133,8 +157,14 @@ def transcribe(req: TranscribeRequest):
             condition_on_previous_text=False,
         )
 
+        _progress["duration"] = float(info.duration or 0)
+
         out_segments = []
         for seg in segments:
+            # The generator is consumed lazily, so seg.end is genuinely how far
+            # through the audio the model has got.
+            if _progress["duration"]:
+                _progress["fraction"] = min(1.0, float(seg.end) / _progress["duration"])
             words = []
             for w in (seg.words or []):
                 text = w.word.strip()
@@ -152,6 +182,7 @@ def transcribe(req: TranscribeRequest):
                 "words": words,
             })
 
+    _progress.update({"path": None, "fraction": 0.0, "started": 0.0, "duration": 0.0})
     _last_used = time.time()
     elapsed = time.time() - t0
     n_words = sum(len(s["words"]) for s in out_segments)
@@ -163,6 +194,7 @@ def transcribe(req: TranscribeRequest):
 
     if not out_segments:
         raise HTTPException(status_code=500, detail="whisper produced no segments")
+
 
     return {
         "language": info.language,

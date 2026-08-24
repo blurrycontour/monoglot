@@ -120,6 +120,9 @@ data class PipelineItem(
     val status: String = "",
     val attempts: Int = 0,
     val error: String = "",
+    /** 0..1 while this episode is the one being transcribed. */
+    val progress: Float = 0f,
+    @SerialName("elapsed_seconds") val elapsedSeconds: Float = 0f,
 )
 
 /** First-run state of the server: a new instance spends several minutes
