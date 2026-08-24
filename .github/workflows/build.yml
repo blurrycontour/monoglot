@@ -69,7 +69,7 @@ jobs:
       # download and re-derive every run. The toolchain image only ever covered
       # the SDK and Gradle itself.
       - name: Cache Gradle home
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .gradle-cache
           key: gradle-${{ hashFiles('android/gradle/libs.versions.toml', 'android/**/*.gradle.kts') }}
