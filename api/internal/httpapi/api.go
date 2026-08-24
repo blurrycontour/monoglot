@@ -43,6 +43,11 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/download", s.downloadPage)
 	r.Get("/download/monoglot.apk", s.downloadAPK)
 	r.Get("/api/app/version", s.appVersion)
+	// Unauthenticated with the install page: an icon behind a bearer
+	// token is an icon that never renders.
+	r.Get("/api/app/icon", s.appIcon)
+	r.Get("/api/app/icon.svg", s.appIcon)
+	r.Get("/favicon.ico", s.appIcon)
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.auth)

@@ -79,6 +79,9 @@ interface ProgressDao {
 
     @Query("UPDATE local_progress SET synced = 1 WHERE itemId = :itemId")
     suspend fun markSynced(itemId: Int)
+
+    @Query("DELETE FROM local_progress")
+    suspend fun deleteAll()
 }
 
 @Database(
@@ -145,6 +148,16 @@ class OfflineStore(private val context: Context) {
         db.downloads().all().forEach { File(it.audioPath).delete() }
         db.downloads().deleteAll()
         audioDir().listFiles()?.forEach { it.delete() }
+    }
+
+    /**
+     * Everything local, including saved positions. Used when the server
+     * changes: item ids are per-server, so a downloaded episode 42 from one
+     * instance would be served up as episode 42 of another.
+     */
+    suspend fun clearForServerChange() = withContext(Dispatchers.IO) {
+        clearAll()
+        db.progress().deleteAll()
     }
 
     suspend fun totalBytes(): Long = withContext(Dispatchers.IO) {

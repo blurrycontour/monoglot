@@ -41,6 +41,7 @@ data class PlayerState(
     /** Shown once the audio runs out, until dismissed. */
     val finished: EpisodeSummary? = null,
     val finishedVisible: Boolean = false,
+    val busy: Boolean = false,
 )
 
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
@@ -263,6 +264,48 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         if (pausedForPopup) {
             pausedForPopup = false
             PlaybackHolder.play()
+        }
+    }
+
+    /** Save or remove the offline copy of the episode being played. */
+    fun toggleDownload() {
+        val id = itemId
+        if (id <= 0) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(busy = true)
+            runCatching {
+                if (_state.value.isDownloaded) repo.removeDownload(id) else repo.download(id)
+            }
+            _state.value = _state.value.copy(
+                busy = false,
+                isDownloaded = repo.isDownloaded(id),
+            )
+        }
+    }
+
+    fun clearProgress() {
+        val id = itemId
+        if (id <= 0) return
+        viewModelScope.launch {
+            runCatching { repo.api.resetProgress(id) }
+            runCatching { repo.clearLocalProgress(id) }
+            lastSavedBucket = -1
+            sawBeforeEnd = false
+            _state.value = _state.value.copy(completed = false)
+            seekTo(0)
+        }
+    }
+
+    /** Frees the server's copy. The episode stays in the library and can be
+     *  fetched again, but there is nothing left to play here. */
+    fun archive(onDone: () -> Unit) {
+        val id = itemId
+        if (id <= 0) return
+        viewModelScope.launch {
+            PlaybackHolder.stop()
+            runCatching { repo.api.archiveItem(id) }
+            runCatching { repo.removeDownload(id) }
+            onDone()
         }
     }
 

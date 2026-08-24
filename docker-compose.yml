@@ -1,6 +1,12 @@
+# Production compose file: it pulls published images and needs nothing but a
+# .env beside it. `docker compose up -d` on a bare host is the whole install —
+# the API imports the dictionary and word forms itself on first start.
+#
+# On a checkout, docker-compose.override.yml is merged in automatically and
+# builds from source instead. Delete or rename it to test the published images.
 services:
   worker:
-    build: ./worker
+    image: ${IMAGE_REGISTRY:-ghcr.io/blurrycontour}/monoglot-worker:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       WHISPER_MODEL: ${WHISPER_MODEL}
@@ -11,7 +17,7 @@ services:
     volumes:
       # The worker reads audio by path, so it must see the same files the API
       # wrote. Read-only: the worker never modifies content.
-      - ./data:/data:ro
+      - monoglot-data:/data:ro
       - models:/models
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:9000/health"]
@@ -21,7 +27,7 @@ services:
       start_period: 20s
 
   api:
-    build: ./api
+    image: ${IMAGE_REGISTRY:-ghcr.io/blurrycontour}/monoglot-api:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       DATABASE_PATH: /data/monoglot.db
@@ -35,12 +41,13 @@ services:
       INGEST_CRON_HOUR: ${INGEST_CRON_HOUR}
       INGEST_CRON_MINUTE: ${INGEST_CRON_MINUTE}
       INGEST_ON_START: ${INGEST_ON_START}
+      TRANSLATE_FALLBACK: ${TRANSLATE_FALLBACK:-1}
       LLM_ENABLED: ${LLM_ENABLED}
       OLLAMA_URL: ${OLLAMA_URL}
       OLLAMA_MODEL: ${OLLAMA_MODEL}
       TZ: Europe/Stockholm
     volumes:
-      - ./data:/data
+      - monoglot-data:/data
       # Per-container CPU/memory for the System screen. Read-only stops the
       # socket file being rewritten; it does NOT make the Engine API read-only,
       # so this is only acceptable because the API issues GETs and stays on the
@@ -58,3 +65,6 @@ services:
 
 volumes:
   models:
+  # A named volume, not a bind mount: on a host without the repo there is no
+  # ./data to bind, and compose would silently create a root-owned one.
+  monoglot-data:

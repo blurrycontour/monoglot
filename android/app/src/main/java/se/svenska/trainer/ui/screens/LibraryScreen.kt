@@ -38,6 +38,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import se.svenska.trainer.data.Graph
@@ -96,7 +97,17 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val state = _state.asStateFlow()
     private var pollJob: Job? = null
 
-    init { refresh(initial = true) }
+    init {
+        refresh(initial = true)
+        // Everything held here belongs to one server; start over when it
+        // changes rather than showing the old instance's data.
+        viewModelScope.launch {
+            repo.settings.serverEpochFlow.drop(1).collect {
+                _state.value = LibraryState()
+                refresh(initial = true)
+            }
+        }
+    }
 
     fun refresh(initial: Boolean = false) {
         viewModelScope.launch {
@@ -588,7 +599,6 @@ private fun EpisodeCard(
     onClearProgress: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
     val progress = if (item.durationMs > 0) {
         (item.positionMs.toFloat() / item.durationMs).coerceIn(0f, 1f)
     } else 0f
@@ -666,37 +676,13 @@ private fun EpisodeCard(
                     Spacer(Modifier.width(6.dp))
                 }
 
-                Box {
-                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
-                        Icon(Icons.Default.MoreVert, "More actions", Modifier.size(20.dp))
-                    }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text(if (downloaded) "Remove download" else "Save for offline") },
-                            leadingIcon = {
-                                Icon(
-                                    if (downloaded) Icons.Default.DownloadDone
-                                    else Icons.Default.Download,
-                                    null,
-                                )
-                            },
-                            onClick = { menuOpen = false; onToggleDownload() },
-                        )
-                        if (item.positionMs > 0 || item.completed) {
-                            DropdownMenuItem(
-                                text = { Text("Clear progress") },
-                                leadingIcon = { Icon(Icons.Default.RestartAlt, null) },
-                                onClick = { menuOpen = false; onClearProgress() },
-                            )
-                        }
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Free up server space") },
-                            leadingIcon = { Icon(Icons.Default.DeleteSweep, null) },
-                            onClick = { menuOpen = false; onArchive() },
-                        )
-                    }
-                }
+                EpisodeActionsMenu(
+                    downloaded = downloaded,
+                    hasProgress = item.positionMs > 0 || item.completed,
+                    onToggleDownload = onToggleDownload,
+                    onClearProgress = onClearProgress,
+                    onArchive = onArchive,
+                )
             }
 
             // Headline is secondary: for Klartext it is the same every day, and

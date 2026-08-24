@@ -85,6 +85,20 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = {
+                    if (state.busy) {
+                        CircularProgressIndicator(
+                            Modifier.size(18.dp).padding(end = 4.dp), strokeWidth = 2.dp,
+                        )
+                    }
+                    EpisodeActionsMenu(
+                        downloaded = state.isDownloaded,
+                        hasProgress = state.positionMs > 0 || state.completed,
+                        onToggleDownload = { vm.toggleDownload() },
+                        onClearProgress = { vm.clearProgress() },
+                        onArchive = { vm.archive(onBack) },
+                    )
+                },
             )
         },
     ) { padding ->
@@ -320,13 +334,13 @@ private fun SentenceText(
     ) {
         tokens.forEach { token ->
             val isActive = token.id == activeTokenId
-            // Colour and a background chip only: bolding the spoken word made
-            // it measurably wider, which reflowed the whole line on every word
-            // when the sentence was near the wrap point.
+            // Colour and a background chip, but never a weight change: bold
+            // makes the glyphs measurably wider, which reflowed the whole line
+            // as each word came up when the sentence sat near the wrap point.
             Text(
                 text = token.surface,
                 style = TranscriptStyle,
-                color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else base,
+                color = if (isActive) MaterialTheme.colorScheme.primary else base,
                 modifier = Modifier
                     .clip(RoundedCornerShape(5.dp))
                     .background(

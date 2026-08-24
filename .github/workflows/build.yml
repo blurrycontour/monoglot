@@ -1,8 +1,11 @@
 name: build
 
-# Artifacts only: no tags, no releases, no publishing anywhere. This exists to
-# prove a clean checkout still compiles — which it did not, for a while, because
-# an unanchored data/ in .gitignore had swallowed a whole Kotlin package.
+# Two jobs: publish the container images that the production host pulls, and
+# build the APK as a downloadable artifact. No tags and no release pipeline —
+# main is the only branch that publishes, and :latest is what prod runs.
+#
+# It also serves as the clean-checkout compile check, which is not theoretical:
+# an unanchored data/ in .gitignore once swallowed a whole Kotlin package.
 on:
   push:
     branches: [main]
@@ -10,8 +13,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  api:
+  images:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -28,24 +34,42 @@ jobs:
           GOWORK: "off"
         run: go test ./...
 
-      - name: Build images
-        run: docker compose build api worker
+      - uses: docker/setup-buildx-action@v3
 
-      # docker save, not a registry push: this is a personal instance and the
-      # images are only ever built on the host that runs them.
-      # Image names come from the compose project, which is the checkout
-      # directory name; ask compose rather than hard-coding it.
-      - name: Export images
-        run: |
-          mkdir -p out
-          docker save $(docker compose config --images | tr '\n' ' ') \
-            | gzip > out/images.tar.gz
-
-      - uses: actions/upload-artifact@v4
+      # Pull requests build but must not publish: :latest is what the
+      # production host runs, and it is not a review surface.
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
         with:
-          name: container-images
-          path: out/images.tar.gz
-          retention-days: 14
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Owner in lowercase
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - name: Build and push api
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ghcr.io/${{ env.OWNER }}/monoglot-api:latest
+            ghcr.io/${{ env.OWNER }}/monoglot-api:${{ github.sha }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Build and push worker
+        uses: docker/build-push-action@v6
+        with:
+          context: ./worker
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ghcr.io/${{ env.OWNER }}/monoglot-worker:latest
+            ghcr.io/${{ env.OWNER }}/monoglot-worker:${{ github.sha }}
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker
 
   apk:
     runs-on: ubuntu-latest
@@ -84,3 +108,10 @@ jobs:
       # design; the image supplies Gradle and the SDK.
       - name: Build APK
         run: scripts/android.sh "$TASK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monoglot-apk
+          path: android/app/build/outputs/apk/**/*.apk
+          retention-days: 14
+          if-no-files-found: error

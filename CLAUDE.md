@@ -24,11 +24,17 @@ scripts/   android.sh builds the APK inside Docker.
 ```
 
 ```bash
-./bootstrap.sh                              # clean checkout -> running instance
+./bootstrap.sh                              # checkout -> running instance
 ./scripts/android.sh                        # signed release APK -> data/apk/
 docker compose run --rm api ingest discover # or download | transcribe | all
 cd api && GOWORK=off go test ./...
 ```
+
+`docker-compose.yml` is the production file: it pulls `ghcr.io/blurrycontour/
+monoglot-{api,worker}` into a named volume, and the API imports the dictionary
+and word forms itself on first start, so a bare host needs only that file and a
+`.env`. `docker-compose.override.yml` is merged in on a checkout and switches
+to building from source with `./data` bind-mounted.
 
 `GOWORK=off` is mandatory: a parent `go.work` at `~/repos/go.work` otherwise
 captures this module.

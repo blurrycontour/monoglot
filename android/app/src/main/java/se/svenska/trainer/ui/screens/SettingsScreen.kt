@@ -13,6 +13,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -30,6 +32,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import se.svenska.trainer.data.Graph
 import se.svenska.trainer.data.SourceRow
+import se.svenska.trainer.player.PlaybackHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import se.svenska.trainer.data.TranscriptMode
@@ -48,7 +51,12 @@ data class SettingsState(
     val storageBytes: Long = 0,
     val downloadCount: Int = 0,
     val message: String? = null,
+    val connection: Connection = Connection.UNKNOWN,
 )
+
+/** Result of the last connection test, shown on the button itself: a snackbar
+ *  that has already faded cannot answer "is this address right?". */
+enum class Connection { UNKNOWN, TESTING, OK, FAILED }
 
 class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = Graph.repository
@@ -75,14 +83,30 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveServer(url: String, token: String) {
         viewModelScope.launch {
-            repo.settings.setServer(url, token)
+            _state.value = _state.value.copy(connection = Connection.TESTING)
+            val changed = repo.settings.setServer(url, token)
+
+            // A different server means everything held locally belongs to
+            // somebody else: item ids, saved positions and downloaded audio
+            // are all per-instance, and reusing them would play one server's
+            // episode under another's title.
+            if (changed) {
+                PlaybackHolder.stop()
+                repo.offline.clearForServerChange()
+            }
+
             val ok = repo.api.health()
             _state.value = _state.value.copy(
                 serverUrl = url,
                 authToken = token,
-                message = if (ok) "Connected" else "Saved, but the server did not respond",
+                connection = if (ok) Connection.OK else Connection.FAILED,
+                message = when {
+                    ok && changed -> "Connected. Local downloads and positions cleared."
+                    ok -> "Connected"
+                    else -> "Saved, but the server did not respond"
+                },
             )
-            if (ok) load()
+            load()
         }
     }
 
@@ -120,6 +144,12 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun invalidateConnection() {
+        if (_state.value.connection != Connection.TESTING) {
+            _state.value = _state.value.copy(connection = Connection.UNKNOWN)
+        }
+    }
+
     fun clearMessage() { _state.value = _state.value.copy(message = null) }
 }
 
@@ -132,6 +162,8 @@ fun SettingsScreen(visible: Boolean = true) {
 
     var url by remember(state.serverUrl) { mutableStateOf(state.serverUrl) }
     var token by remember(state.authToken) { mutableStateOf(state.authToken) }
+    // The verdict belongs to the address that was tested, not to the field.
+    LaunchedEffect(url, token) { vm.invalidateConnection() }
 
     RefreshWhenVisible(visible) { vm.load() }
 
@@ -179,8 +211,43 @@ fun SettingsScreen(visible: Boolean = true) {
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
             )
-            Button(onClick = { vm.saveServer(url, token) }, modifier = Modifier.fillMaxWidth()) {
-                Text("Save and test connection")
+            Button(
+                onClick = { vm.saveServer(url, token) },
+                enabled = state.connection != Connection.TESTING,
+                modifier = Modifier.fillMaxWidth(),
+                colors = when (state.connection) {
+                    Connection.OK -> ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                    )
+                    Connection.FAILED -> ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    else -> ButtonDefaults.buttonColors()
+                },
+            ) {
+                when (state.connection) {
+                    Connection.TESTING -> {
+                        CircularProgressIndicator(
+                            Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = LocalContentColor.current,
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text("Testing…")
+                    }
+                    Connection.OK -> {
+                        Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Connected")
+                    }
+                    Connection.FAILED -> {
+                        Icon(Icons.Default.ErrorOutline, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("No response — check the address")
+                    }
+                    Connection.UNKNOWN -> Text("Save and test connection")
+                }
             }
 
             HorizontalDivider()

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -41,6 +42,7 @@ class SettingsStore(private val context: Context) {
         val LIBRARY_FILTER = stringPreferencesKey("library_filter")
         val AUTO_UPDATE_CHECK = stringPreferencesKey("auto_update_check")
         val LAST_ITEM = stringPreferencesKey("last_item_id")
+        val SERVER_EPOCH = intPreferencesKey("server_epoch")
     }
 
     private val prefs: Flow<Preferences> get() = context.dataStore.data
@@ -84,11 +86,23 @@ class SettingsStore(private val context: Context) {
     suspend fun authToken(): String = authTokenFlow.first()
     suspend fun isConfigured(): Boolean = serverUrl().isNotBlank() && authToken().isNotBlank()
 
-    suspend fun setServer(url: String, token: String) {
+    /**
+     * Bumped whenever the server actually changes. Everything cached in the
+     * app belongs to one server — item ids, progress, downloads, the word list
+     * — so screens watch this and start over rather than showing one
+     * instance's data under another's address.
+     */
+    val serverEpochFlow: Flow<Int> = prefs.map { it[Keys.SERVER_EPOCH] ?: 0 }
+
+    /** Returns true if this was a change of server rather than a re-save. */
+    suspend fun setServer(url: String, token: String): Boolean {
+        val changed = serverUrl() != url.trim() || authToken() != token.trim()
         context.dataStore.edit {
             it[Keys.SERVER_URL] = url.trim()
             it[Keys.AUTH_TOKEN] = token.trim()
+            if (changed) it[Keys.SERVER_EPOCH] = (it[Keys.SERVER_EPOCH] ?: 0) + 1
         }
+        return changed
     }
 
     suspend fun setSpeed(speed: Float) {

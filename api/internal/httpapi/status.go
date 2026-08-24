@@ -1,6 +1,10 @@
 package httpapi
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/adityasingh/svenska/api/internal/bootstrap"
+)
 
 // PipelineStatus lets the app show what the server is still working on, so a
 // fresh install is usable immediately instead of looking empty while the slow
@@ -16,6 +20,10 @@ type PipelineStatus struct {
 	Transcribing  int  `json:"transcribing"`
 	Downloading   int  `json:"downloading"` // new or mid-download
 	IngestRunning bool `json:"ingest_running"`
+	// First-run state. A new instance spends several minutes importing a
+	// dictionary before it can define anything, and the app needs to say so
+	// rather than showing an empty library.
+	Bootstrap bootstrap.Status `json:"bootstrap"`
 }
 
 func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
@@ -27,7 +35,11 @@ func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	out := PipelineStatus{Counts: map[string]int{}, IngestRunning: s.runner.Running()}
+	out := PipelineStatus{
+		Counts:        map[string]int{},
+		IngestRunning: s.runner.Running(),
+		Bootstrap:     bootstrap.Get(),
+	}
 	for rows.Next() {
 		var status string
 		var n int

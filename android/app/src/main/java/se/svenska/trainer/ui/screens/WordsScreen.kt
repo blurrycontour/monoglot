@@ -35,6 +35,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import se.svenska.trainer.data.Candidate
@@ -82,7 +83,14 @@ class WordsViewModel(app: Application) : AndroidViewModel(app) {
     private val _loading = MutableStateFlow(true)
     val loading = _loading.asStateFlow()
 
-    init { load() }
+    init {
+        load()
+        // Everything held here belongs to one server; start over when it
+        // changes rather than showing the old instance's data.
+        viewModelScope.launch {
+            repo.settings.serverEpochFlow.drop(1).collect { load() }
+        }
+    }
 
     fun load() {
         viewModelScope.launch {
