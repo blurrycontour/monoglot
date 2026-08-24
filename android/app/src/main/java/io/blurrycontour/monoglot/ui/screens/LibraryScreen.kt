@@ -54,6 +54,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.blurrycontour.monoglot.data.SourceStats
 import io.blurrycontour.monoglot.player.PlaybackHolder
 import io.blurrycontour.monoglot.ui.util.Dates
+import io.blurrycontour.monoglot.ui.util.formatBytesShort
 import io.blurrycontour.monoglot.ui.util.RefreshWhenVisible
 import io.blurrycontour.monoglot.ui.util.rememberIsForeground
 import io.blurrycontour.monoglot.ui.util.formatDuration
@@ -1208,22 +1209,35 @@ private fun QueueSheet(
                                 MaterialTheme.colorScheme.error
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        // Real progress, read from the worker as it consumes
-                        // the audio, rather than a spinner that says only
-                        // "something is happening".
-                        if (item.status == "transcribing" && item.progress > 0f) {
+                        // Real progress for both slow stages: bytes as the
+                        // audio arrives, then audio-seconds as the model
+                        // consumes it. A spinner only says "something is
+                        // happening", which is no help on a big episode.
+                        val active = item.status == "downloading" ||
+                            item.status == "transcribing"
+                        if (active && (item.progress > 0f || item.bytesDone > 0)) {
                             Spacer(Modifier.height(5.dp))
-                            LinearProgressIndicator(
-                                progress = { item.progress.coerceIn(0f, 1f) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(4.dp)
-                                    .clip(CircleShape),
-                            )
+                            if (item.progress > 0f) {
+                                LinearProgressIndicator(
+                                    progress = { item.progress.coerceIn(0f, 1f) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(CircleShape),
+                                )
+                            } else {
+                                // No Content-Length: how much has arrived is
+                                // known, how much is left is not.
+                                LinearProgressIndicator(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(CircleShape),
+                                )
+                            }
                             Spacer(Modifier.height(3.dp))
                             Text(
-                                "${(item.progress * 100).toInt()}% · " +
-                                    "${item.elapsedSeconds.toInt()}s elapsed",
+                                progressLabel(item),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -1263,6 +1277,23 @@ private fun QueueSheet(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         }
+    }
+}
+
+/** Downloads are measured in bytes, transcription in how much of the audio has
+ *  been heard; saying "42%" for both would hide which stage is slow. */
+private fun progressLabel(item: PipelineItem): String {
+    val elapsed = "${item.elapsedSeconds.toInt()}s"
+    return if (item.status == "downloading") {
+        val done = formatBytesShort(item.bytesDone)
+        if (item.bytesTotal > 0) {
+            "$done of ${formatBytesShort(item.bytesTotal)} · " +
+                "${(item.progress * 100).toInt()}% · $elapsed"
+        } else {
+            "$done · $elapsed"
+        }
+    } else {
+        "${(item.progress * 100).toInt()}% of the audio · $elapsed"
     }
 }
 

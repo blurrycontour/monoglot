@@ -123,6 +123,8 @@ data class PipelineItem(
     /** 0..1 while this episode is the one being transcribed. */
     val progress: Float = 0f,
     @SerialName("elapsed_seconds") val elapsedSeconds: Float = 0f,
+    @SerialName("bytes_done") val bytesDone: Long = 0,
+    @SerialName("bytes_total") val bytesTotal: Long = 0,
 )
 
 /** First-run state of the server: a new instance spends several minutes

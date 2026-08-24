@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/blurrycontour/monoglot/api/internal/bootstrap"
 	"github.com/blurrycontour/monoglot/api/internal/db"
+	"github.com/blurrycontour/monoglot/api/internal/ingest"
 )
 
 // PipelineStatus lets the app show what the server is still working on, so a
@@ -52,6 +55,10 @@ type PipelineItem struct {
 	Progress float64 `json:"progress,omitempty"`
 	// Seconds the current transcription has been running.
 	ElapsedSeconds float64 `json:"elapsed_seconds,omitempty"`
+	// Bytes, for the download stage only: a percentage of an unknown total is
+	// worse than saying how much has arrived.
+	BytesDone  int64 `json:"bytes_done,omitempty"`
+	BytesTotal int64 `json:"bytes_total,omitempty"`
 }
 
 func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
@@ -115,6 +122,7 @@ func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
+	attachDownloadProgress(out.Items)
 	s.attachWorkerProgress(r.Context(), out.Items)
 	writeJSON(w, http.StatusOK, out)
 }
@@ -158,18 +166,36 @@ func (s *Server) pipelineItems(r *http.Request, source string) ([]PipelineItem, 
 	return out, rows.Err()
 }
 
+// attachDownloadProgress fills in the item being fetched right now. No request
+// to make: the download runs in this process, so it is a read of a mutex.
+func attachDownloadProgress(items []PipelineItem) {
+	state, ok := ingest.DownloadProgress()
+	if !ok {
+		return
+	}
+	for i := range items {
+		if items[i].ID == state.ItemID {
+			items[i].Progress = state.Fraction
+			items[i].ElapsedSeconds = state.Elapsed
+			items[i].BytesDone = state.Written
+			items[i].BytesTotal = state.Total
+			return
+		}
+	}
+}
+
 // attachWorkerProgress asks the worker how far into the current audio it has
 // got. One short request, and only when something is actually transcribing, so
 // a status poll on an idle instance costs nothing extra.
 func (s *Server) attachWorkerProgress(ctx context.Context, items []PipelineItem) {
-	idx := -1
+	transcribing := false
 	for i := range items {
 		if items[i].Status == "transcribing" {
-			idx = i
+			transcribing = true
 			break
 		}
 	}
-	if idx < 0 {
+	if !transcribing {
 		return
 	}
 
@@ -196,6 +222,23 @@ func (s *Server) attachWorkerProgress(ctx context.Context, items []PipelineItem)
 	if json.NewDecoder(resp.Body).Decode(&p) != nil || p.Path == "" {
 		return
 	}
-	items[idx].Progress = p.Fraction
-	items[idx].ElapsedSeconds = p.Elapsed
+
+	// Match on the file, not on "the first transcribing row". The worker runs
+	// one job at a time behind a lock, so while it finishes an earlier file a
+	// newly started row is also 'transcribing' — and it was being shown that
+	// other file's progress, appearing at 88% a second after it began.
+	// Audio is written as <id>.<ext>, so the id is the filename stem.
+	base := filepath.Base(p.Path)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	id, err := strconv.Atoi(stem)
+	if err != nil {
+		return
+	}
+	for i := range items {
+		if items[i].ID == id && items[i].Status == "transcribing" {
+			items[i].Progress = p.Fraction
+			items[i].ElapsedSeconds = p.Elapsed
+			return
+		}
+	}
 }

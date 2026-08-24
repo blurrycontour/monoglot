@@ -125,7 +125,12 @@ func downloadItem(ctx context.Context, pool *sql.DB, audioDir string, id int, ur
 	if err != nil {
 		return err
 	}
-	n, err := io.Copy(f, resp.Body)
+	// Content-Length is what makes the fraction meaningful; SR and Acast both
+	// send it. Without it the app shows an indeterminate bar.
+	startDownload(id, resp.ContentLength)
+	defer endDownload()
+
+	n, err := io.Copy(countingWriter{f}, resp.Body)
 	closeErr := f.Close()
 	if err != nil {
 		os.Remove(tmp)
