@@ -33,7 +33,7 @@ jobs:
       KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The signing key is what makes an in-place update possible: Android
       # identifies an app by (applicationId, signing key). Without the secrets
@@ -55,7 +55,7 @@ jobs:
       # built once and pulled on every later run. Login is needed to pull it as
       # well as to push: GHCR packages are private by default.
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -90,7 +90,7 @@ jobs:
 
       # data/apk holds the published pair: the APK and the version.json the
       # in-app updater reads. Only release tasks write it.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: steps.task.outputs.signed == 'true'
         with:
           name: monoglot-apk
@@ -98,7 +98,7 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: steps.task.outputs.signed != 'true'
         with:
           name: monoglot-apk-debug
@@ -113,9 +113,9 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26"
           cache-dependency-path: api/go.sum
@@ -132,18 +132,18 @@ jobs:
       # builds nothing itself, can still serve /download.
       - name: Collect the signed APK
         if: needs.apk.outputs.signed == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: monoglot-apk
           path: api/apk/
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Pull requests build but must not publish: :latest is what the
       # production host runs, and it is not a review surface.
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -153,7 +153,7 @@ jobs:
         run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
       - name: Build and push api
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./api
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -164,7 +164,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=api
 
       - name: Build and push worker
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./worker
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
