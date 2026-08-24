@@ -30,7 +30,7 @@ fi
     docker builder prune -af || true
     df -h / | tail -1
     echo "=== $(date -Is) maintenance done ==="
-  } >> "$LOG" 2>&1
+  } > "$LOG" 2>&1
 ) </dev/null >/dev/null 2>&1 &
 
 disown || true
