@@ -117,6 +117,21 @@ class Repository(
         bundle?.definitions?.get(normalized)?.let { if (it.isNotEmpty()) return it }
         return runCatching { api.lookup(normalized, itemId).candidates }.getOrDefault(emptyList())
     }
+
+    /**
+     * Logs the tap itself, always, whichever way the definition was found.
+     *
+     * The bundle answers most taps without touching the network, so counting
+     * inside the lookup call meant a word only entered the vocabulary when the
+     * dictionary had failed to inline it — the opposite of the intent.
+     * Best-effort: a failure here must never disturb playback.
+     */
+    suspend fun recordLookup(lemma: String, itemId: Int?, tokenId: Int?) {
+        runCatching { api.recordLookup(lemma, itemId, tokenId) }
+    }
+
+    suspend fun episodeSummary(itemId: Int): EpisodeSummary? =
+        runCatching { api.itemSummary(itemId) }.getOrNull()
 }
 
 /** Manual dependency container. A single-user app does not need Hilt. */

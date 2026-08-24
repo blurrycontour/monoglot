@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import se.svenska.trainer.data.Bundle
 import se.svenska.trainer.data.Candidate
+import se.svenska.trainer.data.EpisodeSummary
 import se.svenska.trainer.data.Graph
 import se.svenska.trainer.data.Token
 import se.svenska.trainer.data.TranscriptMode
@@ -36,6 +37,10 @@ data class PlayerState(
     val speed: Float = 1.0f,
     val popup: WordPopup? = null,
     val isDownloaded: Boolean = false,
+    val completed: Boolean = false,
+    /** Shown once the audio runs out, until dismissed. */
+    val finished: EpisodeSummary? = null,
+    val finishedVisible: Boolean = false,
 )
 
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
@@ -48,10 +53,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private var index: TokenIndex? = null
     private var itemId: Int = -1
     private var lastSavedBucket = -1
+    private var pausedForPopup = false
+
+    /** Whether playback has been somewhere other than the very end since this
+     *  episode was opened. Without it, reopening a finished episode resumes at
+     *  the end and the summary appears before a single word has played. */
+    private var sawBeforeEnd = false
 
     fun load(itemId: Int) {
         if (this.itemId == itemId && _state.value.bundle != null) return
         this.itemId = itemId
+        sawBeforeEnd = false
 
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
@@ -67,6 +79,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     transcriptMode = mode,
                     speed = speed,
                     isDownloaded = repo.isDownloaded(itemId),
+                    completed = bundle.item.completed,
                 )
 
                 PlaybackHolder.connect(getApplication()) {
@@ -136,6 +149,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     completed = dur > 0 && positionMs > dur - 5000)
             }
         }
+
+        // Reaching the end used to leave the last sentence frozen on screen,
+        // which reads as a stall rather than an ending.
+        val dur = _state.value.durationMs
+        if (dur > 0 && positionMs < dur - 2000) sawBeforeEnd = true
+        if (dur > 0 && sawBeforeEnd && positionMs >= dur - 1200 &&
+            !_state.value.finishedVisible
+        ) {
+            showFinished()
+        }
     }
 
     fun playPause() = PlaybackHolder.playPause()
@@ -199,14 +222,23 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Tap-to-define. Resolves from the bundle already in memory, so the popup
      * appears immediately; the network is only consulted on a miss.
-     * Playback is deliberately not paused.
+     *
+     * Playback pauses while the sheet is open and resumes on dismissal, but
+     * only if the tap is what stopped it: reading a definition over the top of
+     * continuing audio means missing the next sentence too.
      */
     fun onWordTapped(token: Token) {
         if (!token.isWord) return
+        if (_state.value.isPlaying) {
+            pausedForPopup = true
+            PlaybackHolder.pause()
+        }
+
         val bundle = _state.value.bundle
         val inline = bundle?.definitions?.get(token.normalized)
         if (!inline.isNullOrEmpty()) {
             _state.value = _state.value.copy(popup = WordPopup(token, inline))
+            record(token, inline)
             return
         }
         _state.value = _state.value.copy(popup = WordPopup(token, emptyList(), loading = true))
@@ -215,15 +247,50 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             if (_state.value.popup?.token?.id == token.id) {
                 _state.value = _state.value.copy(popup = WordPopup(token, candidates))
             }
+            record(token, candidates)
         }
+    }
+
+    /** The tap is the event worth counting, not whether the network was
+     *  consulted. The lemma is preferred so inflections collapse onto one row. */
+    private fun record(token: Token, candidates: List<Candidate>) {
+        val lemma = candidates.firstOrNull()?.lemma ?: token.normalized
+        viewModelScope.launch { repo.recordLookup(lemma, itemId, token.id) }
     }
 
     fun dismissPopup() {
         _state.value = _state.value.copy(popup = null)
+        if (pausedForPopup) {
+            pausedForPopup = false
+            PlaybackHolder.play()
+        }
     }
 
     fun setWordStatus(lemma: String, status: String) {
         viewModelScope.launch { repo.setWordStatus(lemma, status) }
+    }
+
+    private fun showFinished() {
+        _state.value = _state.value.copy(finishedVisible = true, completed = true)
+        viewModelScope.launch {
+            repo.saveProgress(itemId, _state.value.durationMs, completed = true)
+            val summary = repo.episodeSummary(itemId)
+            if (_state.value.finishedVisible) {
+                _state.value = _state.value.copy(finished = summary)
+            }
+        }
+    }
+
+    fun dismissFinished() {
+        _state.value = _state.value.copy(finishedVisible = false, finished = null)
+    }
+
+    /** Start the episode again from the top, from the finished screen. */
+    fun replayEpisode() {
+        dismissFinished()
+        sawBeforeEnd = false
+        seekTo(0)
+        PlaybackHolder.play()
     }
 
     fun tokenIndex(): TokenIndex? = index

@@ -54,7 +54,7 @@ class DatesTest {
             item(3, "2026-08-21T18:55:00Z"),
             item(4, null),
         )
-        val grouped = Dates.groupItems(items)
+        val grouped = Dates.groupItems(items, today)
         assertEquals(listOf("Today", "Yesterday", "This week", "Undated"), grouped.map { it.first })
         assertEquals(items.size, grouped.sumOf { it.second.size })
     }

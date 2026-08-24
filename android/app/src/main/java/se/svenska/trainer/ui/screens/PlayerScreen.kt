@@ -55,11 +55,25 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
             TopAppBar(
                 title = {
                     Column {
-                        Text(
-                            state.bundle?.item?.title ?: "Loading…",
-                            maxLines = 1,
-                            style = MaterialTheme.typography.titleMedium,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                state.bundle?.item?.title ?: "Loading…",
+                                maxLines = 1,
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            // The library marks finished episodes; opening one
+                            // used to drop that entirely.
+                            if (state.completed) {
+                                Spacer(Modifier.width(6.dp))
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    contentDescription = "Finished",
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
                         state.bundle?.item?.sourceName?.let {
                             Text(it, style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -93,6 +107,17 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                 else -> Column(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         TranscriptArea(vm, state)
+                        // Covers the transcript only: the transport stays
+                        // where it was, so scrubbing back into the episode
+                        // does not mean dismissing anything first.
+                        if (state.finishedVisible) {
+                            FinishedOverlay(
+                                summary = state.finished,
+                                onReplay = { vm.replayEpisode() },
+                                onDone = { vm.dismissFinished(); onBack() },
+                                onDismiss = { vm.dismissFinished() },
+                            )
+                        }
                     }
                     Controls(vm, state)
                 }
@@ -295,11 +320,13 @@ private fun SentenceText(
     ) {
         tokens.forEach { token ->
             val isActive = token.id == activeTokenId
+            // Colour and a background chip only: bolding the spoken word made
+            // it measurably wider, which reflowed the whole line on every word
+            // when the sentence was near the wrap point.
             Text(
                 text = token.surface,
                 style = TranscriptStyle,
-                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (isActive) MaterialTheme.colorScheme.primary else base,
+                color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else base,
                 modifier = Modifier
                     .clip(RoundedCornerShape(5.dp))
                     .background(

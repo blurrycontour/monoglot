@@ -42,6 +42,15 @@ func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Dictionary miss: fall back to machine translation rather than telling
+	// the reader nothing. Swedish compounds are productive, so a fixed lexicon
+	// will always have holes.
+	if len(res.Candidates) == 0 {
+		if c, ok := lexicon.TranslateFallback(r.Context(), s.pool, lang, res.Normalized); ok {
+			res.Candidates = append(res.Candidates, c)
+		}
+	}
+
 	// Record the tap. Best effort: a logging failure must never break lookup.
 	//
 	// record=0 is for reading your own word list: the count means "times you
@@ -57,13 +66,43 @@ func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) recordLookup(lang string, itemID, tokenID int, res lexicon.Result) {
-	ctx, cancel := contextWithTimeout(5 * time.Second)
-	defer cancel()
-
 	lemma := res.Normalized
 	if len(res.Candidates) > 0 {
 		lemma = res.Candidates[0].Lemma
 	}
+	s.recordLemma(lang, itemID, tokenID, lemma)
+}
+
+// postRecordLookup logs a tap the client answered by itself.
+//
+// Definitions are inlined into the item bundle so a tap never waits on the
+// network — which meant the common case never reached the server at all, and
+// only words the dictionary was missing ever landed in the word list. The
+// client now always calls this and never lets GET /api/lookup count, so the
+// tally lives in exactly one place.
+func (s *Server) postRecordLookup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Lemma   string `json:"lemma"`
+		ItemID  int    `json:"item_id"`
+		TokenID int    `json:"token_id"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		badRequest(w, err.Error())
+		return
+	}
+	lemma := lexicon.Normalize(body.Lemma)
+	if lemma == "" {
+		badRequest(w, "missing lemma")
+		return
+	}
+	s.recordLemma(langOr(r), body.ItemID, body.TokenID, lemma)
+	writeJSON(w, http.StatusOK, map[string]string{"recorded": lemma})
+}
+
+func (s *Server) recordLemma(lang string, itemID, tokenID int, lemma string) {
+	ctx, cancel := contextWithTimeout(5 * time.Second)
+	defer cancel()
+
 	var itemArg, tokenArg any
 	if itemID > 0 {
 		itemArg = itemID

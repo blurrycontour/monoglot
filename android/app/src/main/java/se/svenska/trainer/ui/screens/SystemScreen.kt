@@ -28,6 +28,7 @@ import se.svenska.trainer.data.ContainerStat
 import se.svenska.trainer.data.Graph
 import se.svenska.trainer.data.SourceStats
 import se.svenska.trainer.data.SystemInfo
+import se.svenska.trainer.ui.util.RefreshWhenVisible
 import se.svenska.trainer.ui.util.formatBytesShort
 
 data class SystemState(
@@ -104,11 +105,15 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SystemScreen() {
+fun SystemScreen(visible: Boolean = true) {
     val vm: SystemViewModel = viewModel()
     val state by vm.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     var cleanupDialog by remember { mutableStateOf(false) }
+
+    // Finished counts and container figures both go stale the moment you leave
+    // this tab; reload whenever it is the one on screen.
+    RefreshWhenVisible(visible) { vm.load() }
 
     LaunchedEffect(state.message) {
         state.message?.let { snackbar.showSnackbar(it); vm.clearMessage() }

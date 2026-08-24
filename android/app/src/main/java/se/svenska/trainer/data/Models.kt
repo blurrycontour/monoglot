@@ -191,6 +191,18 @@ data class ContainerStat(
     @SerialName("mem_percent") val memPercent: Double = 0.0,
 )
 
+/** End-of-episode debrief. Not a score: the only honest measure available is
+ *  which words you had to look up. */
+@Serializable
+data class EpisodeSummary(
+    @SerialName("item_id") val itemId: Int = 0,
+    val title: String = "",
+    @SerialName("duration_ms") val durationMs: Int = 0,
+    val lookups: Int = 0,
+    @SerialName("unique_words") val uniqueWords: Int = 0,
+    val words: List<String> = emptyList(),
+)
+
 @Serializable
 data class SystemInfo(
     val sources: List<SourceStats> = emptyList(),

@@ -55,9 +55,16 @@ object Dates {
         }
     }
 
-    /** Groups items into ordered sections, preserving the incoming order. */
-    fun groupItems(items: List<ItemSummary>): List<Pair<String, List<ItemSummary>>> {
-        val today = LocalDate.now()
+    /**
+     * Groups items into ordered sections, preserving the incoming order.
+     *
+     * [today] is injectable so the grouping can be tested against fixed dates:
+     * against the real clock the expected labels change overnight.
+     */
+    fun groupItems(
+        items: List<ItemSummary>,
+        today: LocalDate = LocalDate.now(),
+    ): List<Pair<String, List<ItemSummary>>> {
         val order = LinkedHashMap<String, MutableList<ItemSummary>>()
         items.forEach { item ->
             val key = group(parse(item.publishedAt), today)

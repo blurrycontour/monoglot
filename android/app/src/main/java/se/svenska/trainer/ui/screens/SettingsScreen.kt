@@ -37,6 +37,7 @@ import se.svenska.trainer.ui.theme.ACCENTS
 import se.svenska.trainer.ui.theme.ALL_THEMES
 import se.svenska.trainer.ui.theme.AppTheme
 import se.svenska.trainer.ui.theme.themeById
+import se.svenska.trainer.ui.util.RefreshWhenVisible
 
 data class SettingsState(
     val serverUrl: String = "",
@@ -124,13 +125,15 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(visible: Boolean = true) {
     val vm: SettingsViewModel = viewModel()
     val state by vm.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
 
     var url by remember(state.serverUrl) { mutableStateOf(state.serverUrl) }
     var token by remember(state.authToken) { mutableStateOf(state.authToken) }
+
+    RefreshWhenVisible(visible) { vm.load() }
 
     LaunchedEffect(state.message) {
         state.message?.let { snackbar.showSnackbar(it); vm.clearMessage() }

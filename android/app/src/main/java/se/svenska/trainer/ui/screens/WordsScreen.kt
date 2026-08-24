@@ -40,6 +40,7 @@ import kotlinx.coroutines.launch
 import se.svenska.trainer.data.Candidate
 import se.svenska.trainer.data.Graph
 import se.svenska.trainer.data.WordRow
+import se.svenska.trainer.ui.util.RefreshWhenVisible
 
 /**
  * Vocabulary has two states. A word you tapped is by definition one you did
@@ -165,7 +166,7 @@ class WordsViewModel(app: Application) : AndroidViewModel(app) {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun WordsScreen() {
+fun WordsScreen(visible: Boolean = true) {
     val vm: WordsViewModel = viewModel()
     val words by vm.words.collectAsState()
     val filter by vm.filter.collectAsState()
@@ -179,6 +180,10 @@ fun WordsScreen() {
     var confirmDelete by remember { mutableStateOf<String?>(null) }
     var detail by remember { mutableStateOf<WordRow?>(null) }
     var practice by remember { mutableStateOf(false) }
+
+    // Words tapped while listening land on the server; without this the list
+    // only caught up when the app was restarted.
+    RefreshWhenVisible(visible) { vm.load() }
 
     Scaffold(
         containerColor = Color.Transparent,

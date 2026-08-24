@@ -271,3 +271,63 @@ func (s *Server) postProgress(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
+
+// ItemSummary is the end-of-episode debrief: what you actually did, rather
+// than a score. The only honest measure available is how many words you had to
+// look up, and which ones — those are the words the episode taught you.
+type ItemSummaryResponse struct {
+	ItemID      int      `json:"item_id"`
+	Title       string   `json:"title"`
+	DurationMs  int      `json:"duration_ms"`
+	Lookups     int      `json:"lookups"`
+	UniqueWords int      `json:"unique_words"`
+	Words       []string `json:"words"`
+}
+
+func (s *Server) itemSummary(w http.ResponseWriter, r *http.Request) {
+	id, err := intParam(r, "id")
+	if err != nil {
+		badRequest(w, "bad id")
+		return
+	}
+
+	out := ItemSummaryResponse{ItemID: id, Words: []string{}}
+	var dur sql.NullInt64
+	if err := s.pool.QueryRowContext(r.Context(),
+		`SELECT title, duration_ms FROM items WHERE id = ?`, id,
+	).Scan(&out.Title, &dur); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		serverError(w, err)
+		return
+	}
+	out.DurationMs = int(dur.Int64)
+
+	rows, err := s.pool.QueryContext(r.Context(), `
+		SELECT lemma, count(*) FROM lookups
+		WHERE item_id = ? GROUP BY lemma ORDER BY count(*) DESC, lemma`, id)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var lemma string
+		var n int
+		if err := rows.Scan(&lemma, &n); err != nil {
+			serverError(w, err)
+			return
+		}
+		out.Words = append(out.Words, lemma)
+		out.Lookups += n
+	}
+	if err := rows.Err(); err != nil {
+		serverError(w, err)
+		return
+	}
+	out.UniqueWords = len(out.Words)
+
+	writeJSON(w, http.StatusOK, out)
+}

@@ -50,10 +50,12 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/api/items", s.listItems)
 		r.Get("/api/items/{id}", s.getItem)
 		r.Get("/api/items/{id}/bundle", s.getBundle)
+		r.Get("/api/items/{id}/summary", s.itemSummary)
 		r.Get("/api/items/{id}/audio", s.getAudio)
 		r.Post("/api/items/{id}/progress", s.postProgress)
 
 		r.Get("/api/lookup", s.lookup)
+		r.Post("/api/lookup/record", s.postRecordLookup)
 		r.Post("/api/words/{lemma}/status", s.postWordStatus)
 		r.Get("/api/words", s.listWords)
 		r.Post("/api/words/delete", s.deleteWords)

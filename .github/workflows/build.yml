@@ -49,6 +49,13 @@ jobs:
 
   apk:
     runs-on: ubuntu-latest
+    # Secrets are lifted to job env because the `secrets` context is not
+    # available in a step-level `if`; `env` is.
+    env:
+      KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -57,12 +64,7 @@ jobs:
       # this job still builds, but produces a debug APK that can only be
       # installed fresh — it can never update the app on your phone.
       - name: Restore signing key
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
-        env:
-          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        if: env.KEYSTORE != ''
         run: |
           echo "$KEYSTORE" | base64 -d > android/release.keystore
           cat > android/keystore.properties <<EOF
@@ -82,10 +84,3 @@ jobs:
       # design; the image supplies Gradle and the SDK.
       - name: Build APK
         run: scripts/android.sh "$TASK"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: monoglot-apk
-          path: android/app/build/outputs/apk/**/*.apk
-          retention-days: 14
-          if-no-files-found: error

@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -49,6 +50,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import se.svenska.trainer.data.SourceStats
 import se.svenska.trainer.player.PlaybackHolder
 import se.svenska.trainer.ui.util.Dates
+import se.svenska.trainer.ui.util.RefreshWhenVisible
 import se.svenska.trainer.ui.util.formatDuration
 import se.svenska.trainer.ui.util.remainingLabel
 
@@ -295,7 +297,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun LibraryScreen(onOpen: (Int) -> Unit) {
+fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
     val vm: LibraryViewModel = viewModel()
     val state by vm.state.collectAsState()
     val haptics = LocalHapticFeedback.current
@@ -303,14 +305,7 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
 
     // Returning from the player must show the progress just made, without
     // requiring a manual pull to refresh.
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) vm.refreshQuietly()
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
+    RefreshWhenVisible(visible) { vm.refreshQuietly() }
     val nowPlaying by PlaybackHolder.now.collectAsState()
     LaunchedEffect(nowPlaying.itemId) { vm.refreshQuietly() }
 
@@ -385,6 +380,7 @@ fun LibraryScreen(onOpen: (Int) -> Unit) {
                                     item = item,
                                     downloaded = item.id in state.downloadedIds,
                                     busy = item.id in state.busyIds,
+                                    nowPlaying = item.id == nowPlaying.itemId,
                                     onOpen = { onOpen(item.id) },
                                     onToggleDownload = {
                                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -550,11 +546,15 @@ private fun SourceFilterRow(state: LibraryState, onSelect: (String?) -> Unit) {
 
 @Composable
 private fun SectionHeader(title: String, count: Int) {
+    // Centred, with a rule running out to each side: these are dividers in a
+    // single column of cards, and left-aligning them read as another list item.
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxWidth()) {
         Row(
-            Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 6.dp),
+            Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            HorizontalDivider(Modifier.weight(1f))
             Text(
                 title.uppercase(),
                 style = MaterialTheme.typography.labelMedium,
@@ -562,14 +562,12 @@ private fun SectionHeader(title: String, count: Int) {
                 color = MaterialTheme.colorScheme.primary,
                 letterSpacing = 0.8.sp,
             )
-            Spacer(Modifier.width(8.dp))
             Text(
                 "$count",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.weight(1f))
-            HorizontalDivider(Modifier.width(0.dp))
+            HorizontalDivider(Modifier.weight(1f))
         }
     }
 }
@@ -583,6 +581,7 @@ private fun EpisodeCard(
     item: ItemSummary,
     downloaded: Boolean,
     busy: Boolean,
+    nowPlaying: Boolean,
     onOpen: () -> Unit,
     onToggleDownload: () -> Unit,
     onArchive: () -> Unit,
@@ -605,6 +604,12 @@ private fun EpisodeCard(
                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
             else MaterialTheme.colorScheme.surface,
         ),
+        // The episode the mini player is holding. A border rather than a fill:
+        // it has to be findable in a scroll without shouting over the dates,
+        // which are the field you actually read this list by.
+        border = if (nowPlaying) {
+            BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+        } else null,
     ) {
         Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 10.dp)) {
             Row(verticalAlignment = Alignment.Top) {

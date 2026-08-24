@@ -45,6 +45,10 @@ class ApiClient(private val settings: SettingsStore) {
         }
     }
 
+    /** Minimal JSON string escaping; lemmas can contain quotes and backslashes. */
+    private fun jsonString(s: String): String =
+        kotlinx.serialization.json.JsonPrimitive(s).toString()
+
     private suspend fun post(path: String, payload: String): String = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url(baseUrl() + path)
@@ -75,12 +79,31 @@ class ApiClient(private val settings: SettingsStore) {
      * [record] is false when re-reading a word you already collected: the
      * lookup count means "times you failed to parse this while listening".
      */
-    suspend fun lookup(word: String, itemId: Int? = null, record: Boolean = true): LookupResult {
+    suspend fun lookup(word: String, itemId: Int? = null, record: Boolean = false): LookupResult {
         val q = StringBuilder("/api/lookup?w=").append(java.net.URLEncoder.encode(word, "UTF-8"))
         if (itemId != null) q.append("&item_id=").append(itemId)
         if (!record) q.append("&record=0")
         return json.decodeFromString(get(q.toString()))
     }
+
+    /**
+     * Logs a tap. Kept separate from [lookup] because the common case never
+     * calls lookup at all: definitions are inlined into the bundle so a tap
+     * resolves locally, which meant only words the dictionary was missing ever
+     * reached the word list.
+     */
+    suspend fun recordLookup(lemma: String, itemId: Int?, tokenId: Int?) {
+        val body = buildString {
+            append("""{"lemma":${jsonString(lemma)}""")
+            if (itemId != null) append(""","item_id":$itemId""")
+            if (tokenId != null) append(""","token_id":$tokenId""")
+            append("}")
+        }
+        post("/api/lookup/record", body)
+    }
+
+    suspend fun itemSummary(itemId: Int): EpisodeSummary =
+        json.decodeFromString(get("/api/items/$itemId/summary"))
 
     suspend fun setWordStatus(lemma: String, status: String) {
         val encoded = java.net.URLEncoder.encode(lemma, "UTF-8")

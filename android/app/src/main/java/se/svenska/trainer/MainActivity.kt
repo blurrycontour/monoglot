@@ -216,11 +216,14 @@ private fun TabPager(pagerState: PagerState, onOpenItem: (Int) -> Unit) {
         // forth does not reset what you were looking at.
         beyondViewportPageCount = 1,
     ) { page ->
+        // Every page is composed at once, so a page needs to be told when it
+        // is the one being looked at: that is when its data must be reloaded.
+        val visible = pagerState.settledPage == page
         when (TABS[page].route) {
-            "library" -> LibraryScreen(onOpen = onOpenItem)
-            "words" -> WordsScreen()
-            "system" -> SystemScreen()
-            else -> SettingsScreen()
+            "library" -> LibraryScreen(onOpen = onOpenItem, visible = visible)
+            "words" -> WordsScreen(visible = visible)
+            "system" -> SystemScreen(visible = visible)
+            else -> SettingsScreen(visible = visible)
         }
     }
 }
