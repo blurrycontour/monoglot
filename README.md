@@ -3,8 +3,6 @@
 A personal listening-comprehension trainer. Swedish today, built to take more languages. Audio is primary; the
 transcript is a crutch you reveal on demand, one sentence at a time.
 
-Built to the spec in [SPEC.md](SPEC.md).
-
 ## What it does
 
 Nightly, it pulls new episodes from five Swedish sources — **SR Klartext**,

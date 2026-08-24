@@ -1,8 +1,7 @@
 # Monoglot
 
 Personal, single-user Swedish listening-comprehension app, self-hosted in a
-homelab. `SPEC.md` defines what is deliberately out of scope — read it before
-changing behaviour.
+homelab. `NOT-BUILDING.md` lists what was deliberately turned down, and why.
 
 ## The one idea
 
