@@ -55,8 +55,8 @@ object PlaybackHolder {
     private var ticker: Job? = null
     private var onPositionChanged: ((Int) -> Unit)? = null
 
-    /** 10Hz. A word is never shorter than ~100ms, and 60Hz would burn battery
-     *  for no perceptible gain. */
+    /** 10Hz while playing. A word is never shorter than ~100ms, and 60Hz would
+     *  burn battery for no perceptible gain. */
     private const val TICK_MS = 100L
 
     fun connect(context: Context, onReady: (MediaController) -> Unit = {}) {
@@ -73,7 +73,9 @@ object PlaybackHolder {
             controller = c
             c.addListener(listener)
             syncFromController()
-            startTicker()
+            // Only if something is already playing: connecting is not itself a
+            // reason to start polling.
+            if (c.isPlaying) startTicker() else syncPosition()
             onReady(c)
         }, MoreExecutors.directExecutor())
     }
@@ -81,6 +83,7 @@ object PlaybackHolder {
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _now.value = _now.value.copy(isPlaying = isPlaying)
+            if (isPlaying) startTicker() else stopTicker()
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -101,21 +104,50 @@ object PlaybackHolder {
         )
     }
 
+    /**
+     * Position polling, running only while audio is actually playing.
+     *
+     * It used to start on connect and never stop: ten binder round trips a
+     * second to the playback service, for the whole life of the process,
+     * whether or not anything was playing. Connecting happens on every launch,
+     * so the app spent its entire time in the background waking up 10 times a
+     * second to ask a paused player where it was. That was most of a 24%
+     * battery figure over ten hours.
+     */
     private fun startTicker() {
-        ticker?.cancel()
+        if (ticker?.isActive == true) return
         ticker = scope.launch {
             while (true) {
-                controller?.let { c ->
-                    val pos = c.currentPosition.toInt()
-                    val dur = if (c.duration > 0) c.duration.toInt() else _now.value.durationMs
-                    if (pos != _now.value.positionMs || dur != _now.value.durationMs) {
-                        _now.value = _now.value.copy(positionMs = pos, durationMs = dur)
-                    }
-                    onPositionChanged?.invoke(pos)
+                val c = controller
+                if (c == null || !c.isPlaying) break
+                val pos = c.currentPosition.toInt()
+                val dur = if (c.duration > 0) c.duration.toInt() else _now.value.durationMs
+                if (pos != _now.value.positionMs || dur != _now.value.durationMs) {
+                    _now.value = _now.value.copy(positionMs = pos, durationMs = dur)
                 }
+                onPositionChanged?.invoke(pos)
                 delay(TICK_MS)
             }
+            ticker = null
+            // One last read, so a pause leaves the position exact rather than
+            // up to a tick stale.
+            syncPosition()
         }
+    }
+
+    private fun stopTicker() {
+        ticker?.cancel()
+        ticker = null
+        syncPosition()
+    }
+
+    /** A single position read, for the transitions the ticker does not cover. */
+    private fun syncPosition() {
+        val c = controller ?: return
+        val pos = c.currentPosition.toInt()
+        val dur = if (c.duration > 0) c.duration.toInt() else _now.value.durationMs
+        _now.value = _now.value.copy(positionMs = pos, durationMs = dur)
+        onPositionChanged?.invoke(pos)
     }
 
     /** The player screen registers here to drive word highlighting. */
@@ -177,11 +209,15 @@ object PlaybackHolder {
 
     fun seekTo(ms: Int) {
         controller?.seekTo(ms.toLong().coerceAtLeast(0))
+        // The ticker is asleep while paused, so nothing else would report the
+        // new position.
+        syncPosition()
     }
 
     fun skip(deltaMs: Int) {
         val c = controller ?: return
         c.seekTo((c.currentPosition + deltaMs).coerceAtLeast(0))
+        syncPosition()
     }
 
     fun setSpeed(speed: Float) {

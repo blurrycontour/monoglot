@@ -14,7 +14,11 @@ import (
 //
 // Unauthenticated, like the install page: a favicon that needs a bearer token
 // is a favicon that never renders.
-var iconHeights = []float64{0.34, 0.62, 1.0, 0.62, 0.34}
+
+// Shared with the launcher icon and with AppMark on the Canvas: thirds, and a
+// bar half the width of its slot. These three must agree or the app ships one
+// logo and serves another.
+var iconHeights = []float64{1.0 / 3, 2.0 / 3, 1.0, 2.0 / 3, 1.0 / 3}
 
 func (s *Server) appIcon(w http.ResponseWriter, r *http.Request) {
 	size := 512.0
@@ -46,7 +50,7 @@ func (s *Server) appIcon(w http.ResponseWriter, r *http.Request) {
 	inner := size * 0.68
 	originX := (size - inner) / 2
 	slot := inner / float64(len(iconHeights))
-	barWidth := slot * 0.46
+	barWidth := slot * 0.5
 	for i, h := range iconHeights {
 		barHeight := inner * h
 		x := originX + float64(i)*slot + (slot-barWidth)/2

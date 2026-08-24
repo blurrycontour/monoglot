@@ -88,7 +88,15 @@ class WordsViewModel(app: Application) : AndroidViewModel(app) {
         // Everything held here belongs to one server; start over when it
         // changes rather than showing the old instance's data.
         viewModelScope.launch {
-            repo.settings.serverEpochFlow.drop(1).collect { load() }
+            repo.settings.serverEpochFlow.drop(1).collect {
+                // Cleared, not just reloaded: a word list from the old server
+                // shown under the new one's address is worse than an error,
+                // because nothing on screen says it is stale.
+                _all.value = emptyList()
+                _words.value = emptyList()
+                _selected.value = emptySet()
+                load()
+            }
         }
     }
 
@@ -103,7 +111,11 @@ class WordsViewModel(app: Application) : AndroidViewModel(app) {
                     _error.value = null
                     applyFilter()
                 }
-                .onFailure { _error.value = it.message ?: "Cannot reach server" }
+                .onFailure {
+                    _error.value = it.message ?: "Cannot reach server"
+                    _all.value = emptyList()
+                    applyFilter()
+                }
             _loading.value = false
         }
     }

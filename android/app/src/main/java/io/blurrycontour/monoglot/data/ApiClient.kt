@@ -155,8 +155,11 @@ class ApiClient(private val settings: SettingsStore) {
         return Regex("\"archived\":(\\d+)").find(body)?.groupValues?.get(1)?.toIntOrNull() ?: 0
     }
 
-    suspend fun status(): PipelineStatus =
-        json.decodeFromString(get("/api/status"))
+    /** [source] scopes the counts to one source, matching the chip in use. */
+    suspend fun status(source: String? = null): PipelineStatus =
+        json.decodeFromString(
+            get(if (source.isNullOrBlank()) "/api/status" else "/api/status?source=$source")
+        )
 
     suspend fun sources(): List<SourceRow> =
         json.decodeFromString<SourcesResponse>(get("/api/sources")).sources

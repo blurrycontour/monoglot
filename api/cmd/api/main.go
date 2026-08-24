@@ -146,6 +146,9 @@ func serve(ctx context.Context, cfg config.Config) {
 	cronCtx, cancelCron := context.WithCancel(ctx)
 	defer cancelCron()
 	runner.StartCron(cronCtx)
+	// Five minutes: long enough to be invisible, short enough that a stall is
+	// measured in minutes rather than hours.
+	runner.StartWatchdog(cronCtx, 5*time.Minute)
 
 	firstRun := bootstrap.Needed(ctx, pool, lexicon.DefaultLanguage)
 	go func() {

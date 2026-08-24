@@ -24,11 +24,32 @@ type PipelineStatus struct {
 	// dictionary before it can define anything, and the app needs to say so
 	// rather than showing an empty library.
 	Bootstrap bootstrap.Status `json:"bootstrap"`
+	// What is actually in flight, so the app can show which episodes are
+	// waiting rather than only how many. Capped: the point is a glance at the
+	// queue, not a second copy of the library.
+	Items []PipelineItem `json:"items"`
+}
+
+type PipelineItem struct {
+	ID          int    `json:"id"`
+	SourceSlug  string `json:"source_slug"`
+	Title       string `json:"title"`
+	PublishedAt string `json:"published_at,omitempty"`
+	Status      string `json:"status"`
+	Attempts    int    `json:"attempts"`
+	Error       string `json:"error,omitempty"`
 }
 
 func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.pool.QueryContext(r.Context(),
-		`SELECT status, count(*) FROM items GROUP BY status`)
+	// Scoped to one source when asked. The banner sits under the source chips,
+	// so counting every source under a chip that selects one was simply wrong.
+	source := r.URL.Query().Get("source")
+
+	rows, err := s.pool.QueryContext(r.Context(), `
+		SELECT i.status, count(*)
+		FROM items i JOIN sources s ON s.id = i.source_id
+		WHERE (? = '' OR s.slug = ?)
+		GROUP BY i.status`, source, source)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -74,5 +95,45 @@ func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
+
+	out.Items, err = s.pipelineItems(r, source)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// pipelineItems lists what has not finished, with whatever the last failure
+// said. Ordered by stage so the thing being worked on right now is at the top.
+func (s *Server) pipelineItems(r *http.Request, source string) ([]PipelineItem, error) {
+	rows, err := s.pool.QueryContext(r.Context(), `
+		SELECT i.id, s.slug, i.title, COALESCE(i.published_at,''), i.status,
+		       i.attempts, COALESCE(i.error,'')
+		FROM items i JOIN sources s ON s.id = i.source_id
+		WHERE i.status IN ('new','downloading','downloaded','transcribing','failed')
+		  AND (? = '' OR s.slug = ?)
+		ORDER BY CASE i.status
+		           WHEN 'transcribing' THEN 0
+		           WHEN 'downloading'  THEN 1
+		           WHEN 'downloaded'   THEN 2
+		           WHEN 'new'          THEN 3
+		           ELSE 4 END,
+		         i.published_at DESC
+		LIMIT 60`, source, source)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []PipelineItem{}
+	for rows.Next() {
+		var it PipelineItem
+		if err := rows.Scan(&it.ID, &it.SourceSlug, &it.Title, &it.PublishedAt,
+			&it.Status, &it.Attempts, &it.Error); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
 }

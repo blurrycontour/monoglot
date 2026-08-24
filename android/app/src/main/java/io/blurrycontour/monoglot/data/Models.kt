@@ -106,6 +106,20 @@ data class PipelineStatus(
     val downloading: Int = 0,
     @SerialName("ingest_running") val ingestRunning: Boolean = false,
     val bootstrap: BootstrapStatus = BootstrapStatus(),
+    val items: List<PipelineItem> = emptyList(),
+)
+
+/** One episode that has not finished the pipeline, with whatever the last
+ *  failure said. */
+@Serializable
+data class PipelineItem(
+    val id: Int = 0,
+    @SerialName("source_slug") val sourceSlug: String = "",
+    val title: String = "",
+    @SerialName("published_at") val publishedAt: String? = null,
+    val status: String = "",
+    val attempts: Int = 0,
+    val error: String = "",
 )
 
 /** First-run state of the server: a new instance spends several minutes

@@ -3,8 +3,11 @@ package io.blurrycontour.monoglot.ui.util
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -20,6 +23,31 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
  * Two triggers, because there are two ways a screen comes back into view:
  * swiping to its page, and the app returning to the foreground.
  */
+/**
+ * Whether the app is in the foreground.
+ *
+ * "Visible" as the pager means it is not enough on its own: a tab can be the
+ * selected one while the phone is in a pocket, and anything polling on that
+ * basis polls all night.
+ */
+@Composable
+fun rememberIsForeground(): Boolean {
+    val owner = LocalLifecycleOwner.current
+    var foreground by remember { mutableStateOf(true) }
+    DisposableEffect(owner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> foreground = true
+                Lifecycle.Event.ON_PAUSE -> foreground = false
+                else -> Unit
+            }
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose { owner.lifecycle.removeObserver(observer) }
+    }
+    return foreground
+}
+
 @Composable
 fun RefreshWhenVisible(visible: Boolean, onRefresh: () -> Unit) {
     val refresh by rememberUpdatedState(onRefresh)

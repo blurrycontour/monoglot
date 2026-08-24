@@ -58,6 +58,10 @@ match `.env.example` and exist only so the binary runs outside compose.
   (`new → downloading → downloaded → transcribing → ready`, plus `archived`).
   Every stage must be independently retryable: transcription is slow and must
   never be redone because a later stage failed.
+- **The pipeline only self-starts via the watchdog** (`Runner.StartWatchdog`,
+  every 5 min). The nightly cron alone left any stall parked until 03:30.
+  Anything that counts pending work must match what the stage actually selects,
+  or the drain loop sees no progress and exits.
 - **SR republishes each episode per airing**, same content, different
   `external_id`. Sources set `"one_per_day": true` to dedupe by publish date.
 - **SQLite needs `ANALYZE` after a bulk import.** Without `sqlite_stat1` the
@@ -82,6 +86,10 @@ match `.env.example` and exist only so the binary runs outside compose.
 - **Disk is tight**; `docker builder prune -af` reclaims the most. Always check
   build exit status — a failure piped through `tail` silently keeps the old
   image running.
+- **Nothing in the app may poll while backgrounded.** The position ticker runs
+  only while playing, and status polling only while its tab is foreground and
+  visible; both used to run for the life of the process, which cost 24% of a
+  battery in ten hours.
 - Range requests on the audio endpoint are mandatory: use `http.ServeFile`.
 - SALDO multiword lemmas are filtered at import; they balloon `forms`.
 

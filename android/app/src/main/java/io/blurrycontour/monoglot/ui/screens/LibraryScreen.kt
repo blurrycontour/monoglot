@@ -8,6 +8,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -43,6 +45,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import io.blurrycontour.monoglot.data.Graph
 import io.blurrycontour.monoglot.data.ItemSummary
+import io.blurrycontour.monoglot.data.PipelineItem
 import io.blurrycontour.monoglot.data.PipelineStatus
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
@@ -52,6 +55,7 @@ import io.blurrycontour.monoglot.data.SourceStats
 import io.blurrycontour.monoglot.player.PlaybackHolder
 import io.blurrycontour.monoglot.ui.util.Dates
 import io.blurrycontour.monoglot.ui.util.RefreshWhenVisible
+import io.blurrycontour.monoglot.ui.util.rememberIsForeground
 import io.blurrycontour.monoglot.ui.util.formatDuration
 import io.blurrycontour.monoglot.ui.util.remainingLabel
 
@@ -148,7 +152,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { repo.api.system() }.onSuccess {
             _state.value = _state.value.copy(sources = it.sources)
         }
-        val status = runCatching { repo.api.status() }.getOrNull() ?: return
+        val status = runCatching { repo.api.status(_state.value.sourceFilter) }.getOrNull() ?: return
         _state.value = _state.value.copy(
             status = status,
             batchTotal = batchTotalFor(status),
@@ -162,28 +166,56 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         if (status.processing == 0) 0
         else maxOf(_state.value.batchTotal, status.processing)
 
+    /**
+     * Polls while the server has work in flight — and only while this screen is
+     * the one on the phone.
+     *
+     * It used to poll every six seconds for as long as the process lived,
+     * regardless of what was on screen, and only stopped when the queue
+     * emptied. With a stalled pipeline the queue never emptied, so the app sat
+     * in the background making a request every six seconds indefinitely. That
+     * was the second half of the battery problem.
+     *
+     * The interval backs off as well: a queue that has not moved in minutes is
+     * not going to move in the next six seconds.
+     */
     private fun startPolling() {
         if (pollJob?.isActive == true) return
         pollJob = viewModelScope.launch {
-            while (true) {
-                delay(6_000)
-                val status = runCatching { repo.api.status() }.getOrNull() ?: continue
+            var interval = 6_000L
+            while (visible) {
+                delay(interval)
+                if (!visible) break
+                val status = runCatching { repo.api.status(_state.value.sourceFilter) }.getOrNull() ?: continue
                 val before = _state.value.status?.ready ?: 0
                 _state.value = _state.value.copy(
                     status = status, batchTotal = batchTotalFor(status),
                 )
                 if (status.ready != before) {
+                    interval = 6_000L
                     repo.items(_state.value.sourceFilter).onSuccess {
                         _state.value = _state.value.copy(items = it)
                     }
+                } else {
+                    interval = (interval * 3 / 2).coerceAtMost(60_000L)
                 }
                 if (status.processing == 0 && !status.ingestRunning) break
             }
+            pollJob = null
         }
     }
 
     private fun stopPolling() {
         pollJob?.cancel(); pollJob = null
+    }
+
+    /** Whether the Listen tab is the one being looked at. Polling is only ever
+     *  worth doing for a screen someone can see. */
+    private var visible = false
+
+    fun setVisible(value: Boolean) {
+        visible = value
+        if (!value) stopPolling()
     }
 
     fun setSourceFilter(slug: String?) {
@@ -199,6 +231,13 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             archived = emptyList(), moreExhausted = false,
         )
         viewModelScope.launch {
+            // The banner is scoped to the chip, so it has to be refetched here
+            // rather than left showing every source's queue under one source.
+            runCatching { repo.api.status(slug) }.onSuccess {
+                _state.value = _state.value.copy(
+                    status = it, batchTotal = batchTotalFor(it),
+                )
+            }
             _state.value = _state.value.copy(hasArchive = probeArchived(slug))
             repo.items(slug).onSuccess { items ->
                 val downloaded = repo.offline.downloads.all().map { it.itemId }.toSet()
@@ -317,10 +356,17 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
     // Returning from the player must show the progress just made, without
     // requiring a manual pull to refresh.
     RefreshWhenVisible(visible) { vm.refreshQuietly() }
+    // Backgrounding the app or swiping to another tab stops the status poll.
+    val active = visible && rememberIsForeground()
+    DisposableEffect(active) {
+        vm.setVisible(active)
+        onDispose { vm.setVisible(false) }
+    }
     val nowPlaying by PlaybackHolder.now.collectAsState()
     LaunchedEffect(nowPlaying.itemId) { vm.refreshQuietly() }
 
     var filterSheet by remember { mutableStateOf(false) }
+    var queueSheet by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf<ItemSummary?>(null) }
 
     Scaffold(
@@ -370,7 +416,13 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
             ) {
                 state.status?.let { status ->
                     if (status.processing > 0 || status.failed > 0) {
-                        item { ProcessingBanner(status, state.batchTotal) }
+                        item {
+                            ProcessingBanner(
+                                status = status,
+                                batchTotal = state.batchTotal,
+                                onClick = { queueSheet = true },
+                            )
+                        }
                     }
                 }
 
@@ -432,6 +484,13 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
         }
     }
 
+    }
+
+    if (queueSheet) {
+        QueueSheet(
+            items = state.status?.items.orEmpty(),
+            onDismiss = { queueSheet = false },
+        )
     }
 
     if (filterSheet) {
@@ -509,9 +568,10 @@ private fun FilterSheet(
 fun AppMark(modifier: Modifier = Modifier, tint: Color = MaterialTheme.colorScheme.primary) {
     androidx.compose.foundation.Canvas(modifier) {
         val barCount = 5
-        val heights = listOf(0.34f, 0.62f, 1f, 0.62f, 0.34f)
+        // Same ratios as the launcher icon and /api/app/icon.svg.
+        val heights = listOf(1f / 3, 2f / 3, 1f, 2f / 3, 1f / 3)
         val slot = size.width / barCount
-        val barWidth = slot * 0.46f
+        val barWidth = slot * 0.5f
         heights.forEachIndexed { i, h ->
             val barHeight = size.height * h
             drawRoundRect(
@@ -860,7 +920,11 @@ private fun ShowMoreButton(loading: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ProcessingBanner(status: PipelineStatus, batchTotal: Int) {
+private fun ProcessingBanner(
+    status: PipelineStatus,
+    batchTotal: Int,
+    onClick: () -> Unit,
+) {
     val done = (batchTotal - status.processing).coerceAtLeast(0)
     val fraction = if (batchTotal > 0) done.toFloat() / batchTotal else 0f
     val animated by animateFloatAsState(fraction, tween(500), label = "batch")
@@ -868,7 +932,10 @@ private fun ProcessingBanner(status: PipelineStatus, batchTotal: Int) {
     Surface(
         color = MaterialTheme.colorScheme.secondaryContainer,
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clickable(onClick = onClick),
     ) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
             if (status.processing > 0) {
@@ -987,4 +1054,101 @@ private fun EmptyState(filter: LibraryFilter) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+
+/**
+ * What the pipeline is actually working on.
+ *
+ * The banner only ever gave a count, so a queue that had stopped moving was
+ * indistinguishable from one that was working — and when something had failed,
+ * the reason was only in the server's logs.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QueueSheet(items: List<PipelineItem>, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = 520.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 20.dp, end = 20.dp, bottom = 32.dp),
+        ) {
+            Text(
+                "Queue",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Transcription runs on the server, about a minute per five " +
+                    "minutes of audio. Failures are retried automatically.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(14.dp))
+
+            if (items.isEmpty()) {
+                Text(
+                    "Nothing in the queue.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            items.forEach { item ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 7.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    StageDot(item.status)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            Dates.label(Dates.parse(item.publishedAt)),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            stageLabel(item),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (item.status == "failed")
+                                MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (item.error.isNotBlank()) {
+                            Text(
+                                item.error,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+        }
+    }
+}
+
+private fun stageLabel(item: PipelineItem): String = when (item.status) {
+    "new" -> "waiting to download"
+    "downloading" -> "downloading audio"
+    "downloaded" -> "waiting for transcription"
+    "transcribing" -> "transcribing now"
+    "failed" -> "failed, attempt ${item.attempts} of 3"
+    else -> item.status
+}
+
+@Composable
+private fun StageDot(status: String) {
+    val color = when (status) {
+        "transcribing", "downloading" -> MaterialTheme.colorScheme.primary
+        "failed" -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.outline
+    }
+    Box(Modifier.padding(top = 6.dp).size(8.dp).clip(CircleShape).background(color))
 }

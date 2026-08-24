@@ -103,19 +103,46 @@ func (s *Server) auth(next http.Handler) http.Handler {
 	})
 }
 
+// Paths that say nothing when they succeed. The compose health check alone is
+// 8,640 requests a day, which buried the log lines that matter — the first-run
+// import in particular scrolled past before it could be read.
+var quietPaths = map[string]bool{
+	"/api/health":   true,
+	"/api/status":   true,
+	"/api/app/icon": true,
+	"/favicon.ico":  true,
+}
+
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(rec, r)
 		d := time.Since(start)
+
+		switch {
 		// The spec wants the tap-to-define path measured: anything over 100ms
 		// there is a bug worth fixing, so make it impossible to miss.
-		if strings.HasPrefix(r.URL.Path, "/api/lookup") && d > 100*time.Millisecond {
+		case strings.HasPrefix(r.URL.Path, "/api/lookup") && d > 100*time.Millisecond:
 			log.Printf("SLOW %s %s %s (>100ms budget)", r.Method, r.URL.Path, d)
-		} else {
-			log.Printf("%s %s %s", r.Method, r.URL.Path, d.Round(time.Millisecond))
+		// A polled endpoint is worth a line only when it stops working.
+		case quietPaths[r.URL.Path] && rec.status < 400:
+		default:
+			log.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status, d.Round(time.Millisecond))
 		}
 	})
+}
+
+// statusRecorder exists only so the log can tell a healthy poll from a failing
+// one; without the code there is no way to be quiet about the former.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusRecorder) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {

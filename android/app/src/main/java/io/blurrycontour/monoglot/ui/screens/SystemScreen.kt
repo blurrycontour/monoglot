@@ -33,6 +33,7 @@ import io.blurrycontour.monoglot.data.Graph
 import io.blurrycontour.monoglot.data.SourceStats
 import io.blurrycontour.monoglot.data.SystemInfo
 import io.blurrycontour.monoglot.ui.util.RefreshWhenVisible
+import io.blurrycontour.monoglot.ui.util.rememberIsForeground
 import io.blurrycontour.monoglot.ui.util.formatBytesShort
 
 data class SystemState(
@@ -56,7 +57,12 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
         // Everything held here belongs to one server; start over when it
         // changes rather than showing the old instance's data.
         viewModelScope.launch {
-            repo.settings.serverEpochFlow.drop(1).collect { load() }
+            repo.settings.serverEpochFlow.drop(1).collect {
+                // Same reasoning as the word list: figures from the previous
+                // server must not sit there looking current.
+                _state.value = SystemState()
+                load()
+            }
         }
     }
 
@@ -82,6 +88,9 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
                 .onFailure {
                     _state.value = _state.value.copy(
                         loading = false, error = it.message ?: "Cannot reach server",
+                        // Dropped along with the error: these numbers describe
+                        // a server we can no longer reach.
+                        info = null,
                         offlineBytes = offlineBytes, offlineCount = offlineCount,
                     )
                 }
@@ -89,11 +98,17 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private var polling: Job? = null
+    private var visible = false
+
+    fun setVisible(value: Boolean) {
+        visible = value
+        if (!value) { polling?.cancel(); polling = null }
+    }
 
     private fun pollBootstrap() {
-        if (polling?.isActive == true) return
+        if (polling?.isActive == true || !visible) return
         polling = viewModelScope.launch {
-            while (true) {
+            while (visible) {
                 delay(4_000)
                 val status = runCatching { repo.api.status() }.getOrNull() ?: continue
                 _state.value = _state.value.copy(bootstrap = status.bootstrap)
@@ -155,6 +170,11 @@ fun SystemScreen(visible: Boolean = true) {
     // Finished counts and container figures both go stale the moment you leave
     // this tab; reload whenever it is the one on screen.
     RefreshWhenVisible(visible) { vm.load() }
+    val active = visible && rememberIsForeground()
+    DisposableEffect(active) {
+        vm.setVisible(active)
+        onDispose { vm.setVisible(false) }
+    }
 
     LaunchedEffect(state.message) {
         state.message?.let { snackbar.showSnackbar(it); vm.clearMessage() }
