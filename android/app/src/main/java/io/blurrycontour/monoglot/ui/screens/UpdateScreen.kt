@@ -54,7 +54,10 @@ fun UpdateGate() {
         icon = { Icon(Icons.Default.SystemUpdate, contentDescription = null) },
         title = { Text(if (state is UpdateState.Available) "Update available" else "Updating") },
         text = {
-            Column {
+            // Full width in every state. The progress bar that appears once
+            // downloading starts is the only thing that filled the dialog, so
+            // the dialog used to grow the moment Update was tapped.
+            Column(Modifier.fillMaxWidth()) {
                 Text(
                     version.versionName,
                     style = MaterialTheme.typography.bodyMedium,
@@ -67,36 +70,40 @@ fun UpdateGate() {
                 )
                 Spacer(Modifier.height(14.dp))
 
-                when (val s = state) {
-                    is UpdateState.Available -> Text(
-                        "Download size ${formatBytesShort(version.sizeBytes)}.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-
-                    is UpdateState.Downloading -> {
-                        LinearProgressIndicator(
-                            progress = { s.progress },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "${formatBytesShort(s.bytes)} of ${formatBytesShort(version.sizeBytes)}" +
-                                "  ·  ${(s.progress * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelSmall,
+                // Same floor under all three states, so the height settles once
+                // rather than stepping with each stage.
+                Box(Modifier.fillMaxWidth().heightIn(min = 40.dp)) {
+                    when (val s = state) {
+                        is UpdateState.Available -> Text(
+                            "Download size ${formatBytesShort(version.sizeBytes)}.",
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    }
 
-                    is UpdateState.ReadyToInstall, is UpdateState.Installing -> Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Installing…", style = MaterialTheme.typography.bodySmall)
-                    }
+                        is UpdateState.Downloading -> {
+                            LinearProgressIndicator(
+                                progress = { s.progress },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "${formatBytesShort(s.bytes)} of ${formatBytesShort(version.sizeBytes)}" +
+                                    "  ·  ${(s.progress * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
 
-                    else -> Unit
+                        is UpdateState.ReadyToInstall, is UpdateState.Installing -> Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Text("Installing…", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        else -> Unit
+                    }
                 }
             }
         },

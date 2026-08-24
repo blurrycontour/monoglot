@@ -6,14 +6,40 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE=monoglot-android-build
 KEYSTORE="$ROOT/android/release.keystore"
 KEYPROPS="$ROOT/android/keystore.properties"
 APK_DIR="$ROOT/data/apk"
 
-if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  echo "building $IMAGE (one time, a few minutes)..."
+# The toolchain image is content-addressed by its own Dockerfile: the SDK,
+# build-tools and Gradle versions are all pinned in there, so the same file
+# always yields the same toolchain and a changed file always yields a new tag.
+# Nothing else in the repo can invalidate it.
+#
+# That is what lets it be built once and pulled thereafter. Building it takes
+# several minutes — a JDK, the Android command-line tools, a platform, the
+# build-tools and a Gradle distribution — and doing that on every CI run was
+# most of the cost of building an APK.
+BUILD_TAG=$(sha256sum "$ROOT/android/Dockerfile.build" | cut -c1-12)
+BUILD_REGISTRY="${ANDROID_BUILD_REGISTRY:-${IMAGE_REGISTRY:-ghcr.io/blurrycontour}}"
+IMAGE="monoglot-android-build:$BUILD_TAG"
+REMOTE="$BUILD_REGISTRY/monoglot-android-build:$BUILD_TAG"
+
+if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  :
+elif docker pull "$REMOTE" >/dev/null 2>&1; then
+  echo "==> Using published toolchain $REMOTE"
+  docker tag "$REMOTE" "$IMAGE"
+else
+  echo "==> Building toolchain $IMAGE (one time, a few minutes)"
   docker build -t "$IMAGE" -f "$ROOT/android/Dockerfile.build" "$ROOT/android"
+
+  # Only CI sets this. A laptop build stays local: pushing a toolchain image
+  # from a working tree is not something to do by accident.
+  if [ "${ANDROID_BUILD_PUSH:-0}" = "1" ]; then
+    echo "==> Publishing $REMOTE"
+    docker tag "$IMAGE" "$REMOTE"
+    docker push "$REMOTE"
+  fi
 fi
 
 docker volume create monoglot-gradle-cache >/dev/null

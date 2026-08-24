@@ -74,6 +74,9 @@ match `.env.example` and exist only so the binary runs outside compose.
 - **`scripts/android.sh` publishes only on release tasks** and reads the version
   back out of the built APK. A stale APK under a fresh versionCode makes the
   in-app updater loop forever.
+- **The Android toolchain image is tagged by a hash of `android/Dockerfile.build`**
+  and pulled from GHCR when it exists. Change that file and the next build makes
+  a new one; change anything else and it is reused.
 - **`versionCode` is minutes since 2024**, so a later build always outranks an
   earlier one wherever it was built. Do not make it a commit count.
 - **Disk is tight**; `docker builder prune -af` reclaims the most. Always check

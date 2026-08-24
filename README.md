@@ -29,7 +29,9 @@ said is the learning event.
 | Deployment | Docker Compose |
 
 The Android toolchain runs entirely inside a Docker image; nothing is installed
-on the host.
+on the host. That image is tagged by a hash of its own Dockerfile and published
+to GHCR, so it is built once and pulled thereafter — building it takes several
+minutes and nothing but that file can invalidate it.
 
 ## Running it
 
@@ -146,7 +148,8 @@ secrets unset and copy the APK to the server yourself.
 ## Container images
 
 `main` publishes `ghcr.io/blurrycontour/monoglot-api` and `-worker`, tagged
-`latest` and by commit sha. Pull requests build both without pushing. Point a
+`latest` and by commit sha, plus `monoglot-android-build` tagged by the hash of
+`android/Dockerfile.build`. Pull requests build both without pushing. Point a
 host at a different registry or a pinned build with `IMAGE_REGISTRY` and
 `IMAGE_TAG` in `.env`.
 
