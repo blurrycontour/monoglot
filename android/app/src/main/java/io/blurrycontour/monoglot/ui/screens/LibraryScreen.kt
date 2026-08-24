@@ -378,7 +378,7 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
                     state.loading -> items(5) { SkeletonCard() }
 
                     state.error != null && visible.isEmpty() -> item {
-                        ErrorState(state.error!!) { vm.refresh() }
+                        ServerErrorState(state.error!!, onRetry = { vm.refresh() })
                     }
 
                     visible.isEmpty() -> item { EmptyState(state.filter) }
@@ -963,28 +963,6 @@ private fun rememberInfiniteShimmer(): State<Float> {
         ),
         label = "shimmerAlpha",
     )
-}
-
-@Composable
-private fun ErrorState(message: String, onRetry: () -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Spacer(Modifier.height(40.dp))
-        Icon(Icons.Default.CloudOff, null, Modifier.size(44.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(14.dp))
-        Text("Cannot reach the server", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(6.dp))
-        Text(
-            message,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(18.dp))
-        Button(onClick = onRetry) { Text("Retry") }
-    }
 }
 
 @Composable

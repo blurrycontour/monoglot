@@ -51,7 +51,9 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import io.blurrycontour.monoglot.player.PlaybackHolder
+import androidx.compose.runtime.CompositionLocalProvider
 import io.blurrycontour.monoglot.ui.screens.LibraryScreen
+import io.blurrycontour.monoglot.ui.screens.LocalOpenServerSettings
 import io.blurrycontour.monoglot.ui.screens.MiniPlayerHost
 import io.blurrycontour.monoglot.ui.screens.UpdateGate
 import io.blurrycontour.monoglot.ui.screens.PlayerScreen
@@ -136,6 +138,12 @@ fun App() {
 
     UpdateGate()
 
+    // Settings is the last tab; the server fields are at the top of it.
+    val openServerSettings = {
+        scope.launch { pagerState.animateScrollToPage(TABS.lastIndex) }
+        Unit
+    }
+
     Scaffold(
         // contentColorFor(Transparent) is Unspecified, which leaves
         // LocalContentColor at its black default. Every piece of unstyled text
@@ -183,10 +191,12 @@ fun App() {
             exitTransition = { fadeOut(tween(180)) },
         ) {
             composable("tabs") {
-                TabPager(
-                    pagerState = pagerState,
-                    onOpenItem = { nav.navigate("player/$it") },
-                )
+                CompositionLocalProvider(LocalOpenServerSettings provides openServerSettings) {
+                    TabPager(
+                        pagerState = pagerState,
+                        onOpenItem = { nav.navigate("player/$it") },
+                    )
+                }
             }
             composable(
                 "player/{itemId}",
@@ -194,10 +204,15 @@ fun App() {
                 enterTransition = { slideInVertically(tween(260)) { it / 6 } + fadeIn(tween(260)) },
                 popExitTransition = { slideOutVertically(tween(220)) { it / 6 } + fadeOut(tween(220)) },
             ) { entry ->
-                PlayerScreen(
-                    itemId = entry.arguments?.getInt("itemId") ?: 0,
-                    onBack = { nav.popBackStack() },
-                )
+                CompositionLocalProvider(LocalOpenServerSettings provides {
+                    nav.popBackStack()
+                    openServerSettings()
+                }) {
+                    PlayerScreen(
+                        itemId = entry.arguments?.getInt("itemId") ?: 0,
+                        onBack = { nav.popBackStack() },
+                    )
+                }
             }
         }
     }

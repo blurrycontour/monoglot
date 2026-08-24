@@ -195,13 +195,7 @@ fun SystemScreen(visible: Boolean = true) {
             }
 
             if (state.error != null && info == null) {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Cannot reach server", fontWeight = FontWeight.Medium)
-                        Text(state.error!!, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
+                ServerErrorState(state.error!!, onRetry = { vm.load() })
             }
 
             info?.let { sys ->

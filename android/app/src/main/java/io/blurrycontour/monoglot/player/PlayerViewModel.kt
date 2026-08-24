@@ -61,6 +61,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      *  the end and the summary appears before a single word has played. */
     private var sawBeforeEnd = false
 
+    /** Retry after a failure: load() short-circuits when the id is unchanged,
+     *  which is exactly the case a retry button is for. */
+    fun reload(itemId: Int) {
+        this.itemId = -1
+        load(itemId)
+    }
+
     fun load(itemId: Int) {
         if (this.itemId == itemId && _state.value.bundle != null) return
         this.itemId = itemId

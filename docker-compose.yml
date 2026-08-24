@@ -25,7 +25,7 @@ services:
     volumes:
       # The worker reads audio by path, so it must see the same files the API
       # wrote. Read-only: the worker never modifies content.
-      - ./data:/data:ro
+      - ${DATA_DIR:-./data}:/data:ro
       - models:/models
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:9000/health"]
@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes:
-      - ./data:/data
+      - ${DATA_DIR:-./data}:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - "${API_PORT:-8080}:${API_PORT:-8080}"

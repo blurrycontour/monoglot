@@ -264,7 +264,7 @@ fun WordsScreen(visible: Boolean = true) {
 
                 error != null && words.isEmpty() ->
                     Box(Modifier.fillMaxSize(), Alignment.Center) {
-                        Text(error!!, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        ServerErrorState(error!!, onRetry = { vm.load() })
                     }
 
                 words.isEmpty() ->

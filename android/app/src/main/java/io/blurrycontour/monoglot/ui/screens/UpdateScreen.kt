@@ -28,6 +28,9 @@ fun UpdateGate() {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var checked by remember { mutableStateOf(false) }
+    // Dismissed by hand while the download runs. Reset by the updater going
+    // back to idle, which is what happens once the install prompt is answered.
+    var hidden by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         if (checked) return@LaunchedEffect
@@ -43,7 +46,11 @@ fun UpdateGate() {
         is UpdateState.ReadyToInstall -> s.version
         is UpdateState.Installing -> s.version
         else -> null
-    } ?: return
+    } ?: run {
+        hidden = false
+        return
+    }
+    if (hidden) return
 
     AlertDialog(
         onDismissRequest = {
@@ -70,43 +77,42 @@ fun UpdateGate() {
                 )
                 Spacer(Modifier.height(14.dp))
 
-                // Same floor under all three states, so the height settles once
-                // rather than stepping with each stage.
-                Box(Modifier.fillMaxWidth().heightIn(min = 40.dp)) {
-                    when (val s = state) {
-                        is UpdateState.Available -> Text(
-                            "Download size ${formatBytesShort(version.sizeBytes)}.",
-                            style = MaterialTheme.typography.bodySmall,
+                when (val s = state) {
+                    is UpdateState.Available -> Text(
+                        "Download size ${formatBytesShort(version.sizeBytes)}.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    is UpdateState.Downloading -> {
+                        LinearProgressIndicator(
+                            progress = { s.progress },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "${formatBytesShort(s.bytes)} of ${formatBytesShort(version.sizeBytes)}" +
+                                "  ·  ${(s.progress * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-
-                        is UpdateState.Downloading -> {
-                            LinearProgressIndicator(
-                                progress = { s.progress },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                "${formatBytesShort(s.bytes)} of ${formatBytesShort(version.sizeBytes)}" +
-                                    "  ·  ${(s.progress * 100).toInt()}%",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-
-                        is UpdateState.ReadyToInstall, is UpdateState.Installing -> Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(10.dp))
-                            Text("Installing…", style = MaterialTheme.typography.bodySmall)
-                        }
-
-                        else -> Unit
                     }
+
+                    is UpdateState.ReadyToInstall, is UpdateState.Installing -> Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Installing…", style = MaterialTheme.typography.bodySmall)
+                    }
+
+                else -> Unit
                 }
             }
         },
+        // Both slots always have content. An AlertDialog still reserves its
+        // button row when the slots render nothing, which is where the empty
+        // band under the progress bar came from.
         confirmButton = {
             if (state is UpdateState.Available) {
                 TextButton(onClick = {
@@ -119,6 +125,10 @@ fun UpdateGate() {
                         updater.downloadAndInstall(settings.serverUrl(), version)
                     }
                 }) { Text(if (updater.canInstall()) "Update" else "Allow installs") }
+            } else {
+                // The download runs in the updater, not in this dialog, so
+                // getting out of the way does not cancel it.
+                TextButton(onClick = { hidden = true }) { Text("Hide") }
             }
         },
         dismissButton = {

@@ -115,8 +115,7 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                     CircularProgressIndicator()
                 }
                 state.error != null -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                    Text(state.error!!, color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(24.dp), textAlign = TextAlign.Center)
+                    ServerErrorState(state.error!!, onRetry = { vm.reload(itemId) })
                 }
                 else -> Column(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
