@@ -1,5 +1,7 @@
 # Secrets
 .env
+.env.*
+!.env.example
 
 # Signing keys — back these up privately. Losing them means Android will
 # refuse every future update of the app.

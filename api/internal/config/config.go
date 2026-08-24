@@ -5,6 +5,9 @@ import (
 	"strconv"
 )
 
+// Config is the whole of the API's configuration. Defaults here are the same
+// values .env.example ships, so the binary still runs sensibly outside compose
+// — but .env is the list to change, not this file.
 type Config struct {
 	DatabasePath string
 	Port         string
@@ -17,10 +20,6 @@ type Config struct {
 	IngestHour    int
 	IngestMinute  int
 	IngestOnStart bool
-
-	LLMEnabled  bool
-	OllamaURL   string
-	OllamaModel string
 }
 
 func Load() Config {
@@ -35,9 +34,6 @@ func Load() Config {
 		IngestHour:    envInt("INGEST_CRON_HOUR", 3),
 		IngestMinute:  envInt("INGEST_CRON_MINUTE", 30),
 		IngestOnStart: envBool("INGEST_ON_START", false),
-		LLMEnabled:    envBool("LLM_ENABLED", false),
-		OllamaURL:     env("OLLAMA_URL", "http://host.docker.internal:11434"),
-		OllamaModel:   env("OLLAMA_MODEL", "gemma3:12b"),
 	}
 }
 

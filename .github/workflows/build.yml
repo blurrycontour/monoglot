@@ -15,6 +15,7 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    environment: production
     outputs:
       # Whether the build is release-signed, which decides whether the api
       # image is allowed to ship it. A debug APK carries a throwaway key and
@@ -150,4 +151,3 @@ jobs:
             ghcr.io/${{ env.OWNER }}/monoglot-worker:${{ github.sha }}
           cache-from: type=gha,scope=worker
           cache-to: type=gha,mode=max,scope=worker
-

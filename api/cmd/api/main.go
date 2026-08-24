@@ -76,24 +76,6 @@ func main() {
 		default:
 			log.Fatalf("ingest: unknown stage %q (discover|download|transcribe|all)", argAt(2))
 		}
-	case "import-postgres":
-		// One-shot migration off Postgres. Idempotent, so a partial run can be
-		// repeated safely.
-		pgURL := argAt(2)
-		if pgURL == "" {
-			pgURL = os.Getenv("PG_URL")
-		}
-		if pgURL == "" {
-			log.Fatal("import-postgres: pass the Postgres URL as an argument or set PG_URL")
-		}
-		conn := mustConnect(ctx, cfg)
-		defer conn.Close()
-		if err := db.Migrate(ctx, conn); err != nil {
-			log.Fatalf("migrate: %v", err)
-		}
-		if err := importFromPostgres(ctx, conn, pgURL); err != nil {
-			log.Fatalf("import-postgres: %v", err)
-		}
 	case "find-program":
 		// Diagnostic for the case the spec says to ask about: if the Klartext
 		// program id ever stops resolving, this shows what SR actually has.
@@ -112,7 +94,7 @@ func main() {
 			fmt.Printf("%d\t%s\n", p.ID, p.Name)
 		}
 	default:
-		log.Fatalf("unknown command %q (serve|migrate|import-dictionary|import-morphology|ingest|import-postgres|find-program)", cmd)
+		log.Fatalf("unknown command %q (serve|migrate|import-dictionary|import-morphology|ingest|find-program)", cmd)
 	}
 }
 

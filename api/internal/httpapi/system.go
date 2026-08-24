@@ -153,7 +153,7 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 
 	info.Storage.AudioBytes = dirSize(s.cfg.AudioDir)
 	info.Storage.RawBytes = dirSize(s.cfg.RawDir)
-	info.Storage.CacheBytes = dirSize(os.Getenv("DATA_CACHE_DIR"))
+	info.Storage.CacheBytes = dirSize(cacheDir())
 	if fi, err := os.Stat(s.apkPath()); err == nil {
 		info.Storage.APKBytes = fi.Size()
 	}
@@ -176,6 +176,16 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 		Scan(&info.ListenedMs)
 
 	writeJSON(w, http.StatusOK, info)
+}
+
+// cacheDir matches bootstrap.Fetch: read from the same place, default to the
+// same path. Reading it with no default here made the System screen report
+// zero cache whenever the variable was absent.
+func cacheDir() string {
+	if v := os.Getenv("DATA_CACHE_DIR"); v != "" {
+		return v
+	}
+	return "/data/cache"
 }
 
 func dirSize(dir string) int64 {

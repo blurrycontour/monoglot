@@ -10,17 +10,18 @@
 #
 # ./data is a bind mount on both, deliberately: the database, audio and the APK
 # are things you want to be able to see, back up and copy with ordinary tools.
+#
+# .env is the single list of settings: it is handed to both services whole
+# rather than restated as an `environment:` block, which had drifted into a
+# second set of defaults disagreeing with the first. Compose also reads it
+# itself for the two `${...}` below — those are the only values it needs before
+# a container exists.
 services:
   worker:
     image: ${IMAGE_REGISTRY:-ghcr.io/blurrycontour}/monoglot-worker:${IMAGE_TAG:-latest}
     build: ./worker
     restart: unless-stopped
-    environment:
-      WHISPER_MODEL: ${WHISPER_MODEL}
-      WHISPER_DEVICE: ${WHISPER_DEVICE}
-      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE}
-      WHISPER_BEAM_SIZE: ${WHISPER_BEAM_SIZE}
-      WHISPER_IDLE_UNLOAD_SECONDS: ${WHISPER_IDLE_UNLOAD_SECONDS:-600}
+    env_file: .env
     volumes:
       # The worker reads audio by path, so it must see the same files the API
       # wrote. Read-only: the worker never modifies content.
@@ -37,23 +38,7 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/blurrycontour}/monoglot-api:${IMAGE_TAG:-latest}
     build: ./api
     restart: unless-stopped
-    environment:
-      DATABASE_PATH: /data/monoglot.db
-      API_PORT: "8080"
-      AUTH_TOKEN: ${AUTH_TOKEN}
-      AUDIO_DIR: /data/audio
-      RAW_DIR: /data/raw
-      DATA_CACHE_DIR: /data/cache
-      APK_PATH: /data/apk/monoglot.apk
-      WORKER_URL: http://worker:9000
-      INGEST_CRON_HOUR: ${INGEST_CRON_HOUR}
-      INGEST_CRON_MINUTE: ${INGEST_CRON_MINUTE}
-      INGEST_ON_START: ${INGEST_ON_START}
-      TRANSLATE_FALLBACK: ${TRANSLATE_FALLBACK:-1}
-      LLM_ENABLED: ${LLM_ENABLED}
-      OLLAMA_URL: ${OLLAMA_URL}
-      OLLAMA_MODEL: ${OLLAMA_MODEL}
-      TZ: Europe/Stockholm
+    env_file: .env
     volumes:
       - ./data:/data
       # Per-container CPU/memory for the System screen. Read-only stops the
@@ -64,9 +49,13 @@ services:
     ports:
       # Bound to all interfaces so the phone on the LAN can reach it.
       # This service must not be exposed to the public internet.
-      - "${API_PORT:-8080}:8080"
+      #
+      # Same number on both sides: the API listens on API_PORT, so mapping it
+      # to a different host port would leave the container listening somewhere
+      # the mapping does not point.
+      - "${API_PORT:-8080}:${API_PORT:-8080}"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:${API_PORT:-8080}/api/health"]
       interval: 10s
       timeout: 5s
       retries: 10

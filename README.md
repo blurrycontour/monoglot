@@ -39,6 +39,10 @@ fetch of episodes. It is idempotent — an interrupted first start picks up wher
 it left off, and each step is skipped once recorded. Progress shows on the
 **System** tab and in `docker compose logs -f api`.
 
+Configuration is one file. `.env` is handed whole to both services with
+`env_file`, so there is no second list of defaults in the compose file to keep
+in step; `.env.example` documents every variable the stack reads.
+
 **On a production host** — this file, `docker-compose.yml` and `.env` are all
 you need; no checkout, no toolchain:
 

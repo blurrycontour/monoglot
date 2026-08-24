@@ -39,9 +39,14 @@ local build is served at once.
 `GOWORK=off` is mandatory: a parent `go.work` at `~/repos/go.work` otherwise
 captures this module.
 
-`applicationId` is `io.blurrycontour.monoglot`; the Kotlin package is still
-`io.blurrycontour.monoglot` (internal, not worth renaming). Changing `applicationId`
-again means a fresh install, not an update: local settings and downloads go.
+`applicationId` and the Kotlin package are both `io.blurrycontour.monoglot`; the
+Go module is `github.com/blurrycontour/monoglot`. Changing `applicationId` means
+a fresh install, not an update: local settings and downloads go. The keystore
+alias is still `svenska` and cannot change — it is baked into the key.
+
+`.env` is the only list of settings: compose hands the whole file to both
+services with `env_file`, so never add an `environment:` block. Defaults in Go
+match `.env.example` and exist only so the binary runs outside compose.
 
 ## Traps
 
