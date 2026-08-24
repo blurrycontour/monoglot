@@ -1,4 +1,4 @@
-module github.com/adityasingh/svenska/api
+module github.com/blurrycontour/monoglot/api
 
 go 1.26
 

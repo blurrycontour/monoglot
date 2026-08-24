@@ -13,7 +13,8 @@ import (
 // exists anywhere on the device. It exposes only the APK, never content.
 // This service is not to be exposed to the public internet regardless.
 func (s *Server) downloadPage(w http.ResponseWriter, r *http.Request) {
-	info, err := os.Stat(s.cfg.APKPath)
+	path := s.apkPath()
+	info, err := os.Stat(path)
 
 	data := struct {
 		Available bool
@@ -28,7 +29,7 @@ func (s *Server) downloadPage(w http.ResponseWriter, r *http.Request) {
 		data.Available = true
 		data.Size = fmt.Sprintf("%.1f MB", float64(info.Size())/(1<<20))
 		data.Built = info.ModTime().Format("2 Jan 2006, 15:04")
-		data.Version = apkVersion(s.cfg.APKPath)
+		data.Version = apkVersion(path)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -54,7 +55,8 @@ func trimSpace(b []byte) []byte {
 }
 
 func (s *Server) downloadAPK(w http.ResponseWriter, r *http.Request) {
-	info, err := os.Stat(s.cfg.APKPath)
+	path := s.apkPath()
+	info, err := os.Stat(path)
 	if err != nil {
 		http.Error(w, "no APK has been built yet", http.StatusNotFound)
 		return
@@ -64,7 +66,7 @@ func (s *Server) downloadAPK(w http.ResponseWriter, r *http.Request) {
 	// Never let a stale APK be served from cache: the whole point of this page
 	// is getting the newest build onto the phone.
 	w.Header().Set("Cache-Control", "no-store, must-revalidate")
-	http.ServeContent(w, r, "monoglot.apk", info.ModTime(), mustOpen(w, s.cfg.APKPath))
+	http.ServeContent(w, r, "monoglot.apk", info.ModTime(), mustOpen(w, path))
 }
 
 func mustOpen(w http.ResponseWriter, path string) *os.File {
@@ -132,3 +134,24 @@ var downloadTmpl = template.Must(template.New("download").Parse(`<!doctype html>
     <li>Paste the auth token from the server's <code>.env</code>.</li>
   </ol>
 </main></body></html>`))
+
+// bakedAPKDir holds the APK that CI copied into the image. A production host
+// has no build of its own, so shipping the app with the server is the only way
+// /download can offer anything there.
+const bakedAPKDir = "/app/apk"
+
+// apkPath prefers a build on disk. On a development machine that is the one
+// just built by scripts/android.sh, which must be served immediately rather
+// than after a rebuild of the image; on a production host the directory is
+// empty and the baked copy is what there is.
+func (s *Server) apkPath() string {
+	if _, err := os.Stat(s.cfg.APKPath); err == nil {
+		return s.cfg.APKPath
+	}
+	return filepath.Join(bakedAPKDir, "monoglot.apk")
+}
+
+// apkDir is where the version manifest sits beside the APK being served.
+func (s *Server) apkDir() string {
+	return filepath.Dir(s.apkPath())
+}

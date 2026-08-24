@@ -13,8 +13,79 @@ on:
   workflow_dispatch:
 
 jobs:
+  apk:
+    runs-on: ubuntu-latest
+    outputs:
+      # Whether the build is release-signed, which decides whether the api
+      # image is allowed to ship it. A debug APK carries a throwaway key and
+      # could never update the app on a phone, so baking one in would publish
+      # an install that quietly dead-ends.
+      signed: ${{ steps.task.outputs.signed }}
+    # Secrets are lifted to job env because the `secrets` context is not
+    # available in a step-level `if`; `env` is.
+    env:
+      KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The signing key is what makes an in-place update possible: Android
+      # identifies an app by (applicationId, signing key). Without the secrets
+      # this job still builds, but produces a debug APK that can only ever be
+      # installed fresh.
+      - name: Restore signing key
+        if: env.KEYSTORE != ''
+        run: |
+          echo "$KEYSTORE" | base64 -d > android/release.keystore
+          cat > android/keystore.properties <<EOF
+          storeFile=release.keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          chmod 600 android/release.keystore android/keystore.properties
+
+      - name: Choose task
+        id: task
+        run: |
+          if [ -f android/release.keystore ]; then
+            echo "TASK=assembleRelease" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "TASK=assembleDebug" >> "$GITHUB_ENV"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Same container the local build uses, so CI cannot pass on a toolchain
+      # the host does not have. There is no Gradle wrapper in the tree by
+      # design; the image supplies Gradle and the SDK. versionCode comes from
+      # the clock, so a later local build always outranks a CI one.
+      - name: Build APK
+        run: scripts/android.sh "$TASK"
+
+      # data/apk holds the published pair: the APK and the version.json the
+      # in-app updater reads. Only release tasks write it.
+      - uses: actions/upload-artifact@v4
+        if: steps.task.outputs.signed == 'true'
+        with:
+          name: monoglot-apk
+          path: data/apk/
+          retention-days: 14
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: steps.task.outputs.signed != 'true'
+        with:
+          name: monoglot-apk-debug
+          path: android/app/build/outputs/apk/**/*.apk
+          retention-days: 14
+          if-no-files-found: error
+
   images:
     runs-on: ubuntu-latest
+    needs: apk
     permissions:
       contents: read
       packages: write
@@ -33,6 +104,15 @@ jobs:
         env:
           GOWORK: "off"
         run: go test ./...
+
+      # The app rides along in the api image so a production host, which
+      # builds nothing itself, can still serve /download.
+      - name: Collect the signed APK
+        if: needs.apk.outputs.signed == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: monoglot-apk
+          path: api/apk/
 
       - uses: docker/setup-buildx-action@v3
 
@@ -71,47 +151,3 @@ jobs:
           cache-from: type=gha,scope=worker
           cache-to: type=gha,mode=max,scope=worker
 
-  apk:
-    runs-on: ubuntu-latest
-    # Secrets are lifted to job env because the `secrets` context is not
-    # available in a step-level `if`; `env` is.
-    env:
-      KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-      STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-    steps:
-      - uses: actions/checkout@v4
-
-      # The signing key is what makes an in-place update possible: Android
-      # identifies an app by (applicationId, signing key). Without the secrets
-      # this job still builds, but produces a debug APK that can only be
-      # installed fresh — it can never update the app on your phone.
-      - name: Restore signing key
-        if: env.KEYSTORE != ''
-        run: |
-          echo "$KEYSTORE" | base64 -d > android/release.keystore
-          cat > android/keystore.properties <<EOF
-          storeFile=release.keystore
-          storePassword=$STORE_PASSWORD
-          keyAlias=$KEY_ALIAS
-          keyPassword=$KEY_PASSWORD
-          EOF
-          chmod 600 android/release.keystore android/keystore.properties
-          echo "TASK=assembleRelease" >> "$GITHUB_ENV"
-
-      - name: Choose task
-        run: echo "TASK=${TASK:-assembleDebug}" >> "$GITHUB_ENV"
-
-      # Same container the local build uses, so CI cannot pass on a toolchain
-      # the host does not have. There is no Gradle wrapper in the tree by
-      # design; the image supplies Gradle and the SDK.
-      - name: Build APK
-        run: scripts/android.sh "$TASK"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: monoglot-apk
-          path: android/app/build/outputs/apk/**/*.apk
-          retention-days: 14
-          if-no-files-found: error

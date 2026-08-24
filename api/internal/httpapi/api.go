@@ -14,8 +14,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/adityasingh/svenska/api/internal/config"
-	"github.com/adityasingh/svenska/api/internal/ingest"
+	"github.com/blurrycontour/monoglot/api/internal/config"
+	"github.com/blurrycontour/monoglot/api/internal/ingest"
 )
 
 type Server struct {

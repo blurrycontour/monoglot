@@ -10,7 +10,7 @@ android/keystore.properties
 #
 # Anchored with a leading slash on purpose: an unanchored `data/` matches a
 # directory of that name at ANY depth, which silently excluded the app's own
-# `.../se/svenska/trainer/data/` package from git. A clean checkout then did
+# `.../io/blurrycontour/monoglot/data/` package from git. A clean checkout then did
 # not compile. Keep new entries anchored unless they are genuinely meant to
 # match everywhere.
 /data/

@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/adityasingh/svenska/api/internal/db"
+	"github.com/blurrycontour/monoglot/api/internal/db"
 )
 
 // importFromPostgres copies an existing Postgres database into SQLite.

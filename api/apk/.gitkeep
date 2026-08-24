@@ -1,0 +1,2 @@
+# CI drops the signed monoglot.apk and version.json here before building the
+# image. Kept in git so the COPY in the Dockerfile has something to copy.

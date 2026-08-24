@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/adityasingh/svenska/api/internal/bootstrap"
+	"github.com/blurrycontour/monoglot/api/internal/bootstrap"
 )
 
 // PipelineStatus lets the app show what the server is still working on, so a

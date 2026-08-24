@@ -8,7 +8,7 @@ import (
 
 	"database/sql"
 
-	"github.com/adityasingh/svenska/api/internal/config"
+	"github.com/blurrycontour/monoglot/api/internal/config"
 )
 
 // Runner serialises pipeline execution. Only one run may be in flight at a

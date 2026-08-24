@@ -11,8 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/adityasingh/svenska/api/internal/db"
-	"github.com/adityasingh/svenska/api/internal/lexicon"
+	"github.com/blurrycontour/monoglot/api/internal/db"
+	"github.com/blurrycontour/monoglot/api/internal/lexicon"
 )
 
 // langOr reads ?lang=, falling back to the instance default.

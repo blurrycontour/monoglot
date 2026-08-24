@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE=svenska-android-build
+IMAGE=monoglot-android-build
 KEYSTORE="$ROOT/android/release.keystore"
 KEYPROPS="$ROOT/android/keystore.properties"
 APK_DIR="$ROOT/data/apk"
@@ -16,14 +16,14 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   docker build -t "$IMAGE" -f "$ROOT/android/Dockerfile.build" "$ROOT/android"
 fi
 
-docker volume create svenska-gradle-cache >/dev/null
-docker run --rm -v svenska-gradle-cache:/gradle-cache "$IMAGE" \
+docker volume create monoglot-gradle-cache >/dev/null
+docker run --rm -v monoglot-gradle-cache:/gradle-cache "$IMAGE" \
   chown -R "$(id -u):$(id -g)" /gradle-cache
 
 run_in_container() {
   docker run --rm \
     -v "$ROOT/android:/workspace" \
-    -v svenska-gradle-cache:/gradle-cache \
+    -v monoglot-gradle-cache:/gradle-cache \
     -u "$(id -u):$(id -g)" \
     -e GRADLE_USER_HOME=/gradle-cache \
     -e HOME=/tmp \
@@ -38,15 +38,15 @@ if [ ! -f "$KEYSTORE" ]; then
   PASS="$(openssl rand -hex 24)"
   run_in_container keytool -genkeypair -v \
     -keystore /workspace/release.keystore \
-    -alias svenska \
+    -alias monoglot \
     -keyalg RSA -keysize 4096 -validity 10000 \
     -storepass "$PASS" -keypass "$PASS" \
-    -dname "CN=Svenska Listening Trainer, OU=Personal, O=Personal, C=SE" \
+    -dname "CN=Monoglot Listening Trainer, OU=Personal, O=Personal, C=SE" \
     >/dev/null
   cat > "$KEYPROPS" <<EOF
 storeFile=release.keystore
 storePassword=$PASS
-keyAlias=svenska
+keyAlias=monoglot
 keyPassword=$PASS
 EOF
   chmod 600 "$KEYPROPS" "$KEYSTORE"

@@ -13,13 +13,13 @@ import (
 
 	"database/sql"
 
-	"github.com/adityasingh/svenska/api/internal/bootstrap"
-	"github.com/adityasingh/svenska/api/internal/config"
-	"github.com/adityasingh/svenska/api/internal/db"
-	"github.com/adityasingh/svenska/api/internal/httpapi"
-	"github.com/adityasingh/svenska/api/internal/ingest"
-	"github.com/adityasingh/svenska/api/internal/lexicon"
-	"github.com/adityasingh/svenska/api/internal/srclient"
+	"github.com/blurrycontour/monoglot/api/internal/bootstrap"
+	"github.com/blurrycontour/monoglot/api/internal/config"
+	"github.com/blurrycontour/monoglot/api/internal/db"
+	"github.com/blurrycontour/monoglot/api/internal/httpapi"
+	"github.com/blurrycontour/monoglot/api/internal/ingest"
+	"github.com/blurrycontour/monoglot/api/internal/lexicon"
+	"github.com/blurrycontour/monoglot/api/internal/srclient"
 )
 
 func main() {

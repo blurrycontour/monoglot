@@ -19,8 +19,8 @@ import (
 
 	"database/sql"
 
-	"github.com/adityasingh/svenska/api/internal/db"
-	"github.com/adityasingh/svenska/api/internal/srclient"
+	"github.com/blurrycontour/monoglot/api/internal/db"
+	"github.com/blurrycontour/monoglot/api/internal/srclient"
 )
 
 type Source struct {

@@ -13,7 +13,7 @@ import (
 
 	"database/sql"
 
-	"github.com/adityasingh/svenska/api/internal/db"
+	"github.com/blurrycontour/monoglot/api/internal/db"
 )
 
 // 8 Sidor: the article feed at /feed/ carries no audio enclosures, and the
@@ -55,7 +55,7 @@ func discoverRSS(ctx context.Context, pool *sql.DB, s Source) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	req.Header.Set("User-Agent", "svenska-listening-trainer/1.0 (personal use)")
+	req.Header.Set("User-Agent", "monoglot/1.0 (personal use)")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)

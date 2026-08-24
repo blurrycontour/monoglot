@@ -6,9 +6,16 @@
 // needs only docker-compose.yml and a .env: `docker compose up -d` is the
 // whole install.
 //
-// It is idempotent and safe to re-enter: each step records itself in the
-// imports table, and the audio pipeline is a state machine that already
-// tolerates being restarted at any point.
+// It is idempotent and safe to re-enter, which matters because a container can
+// be killed at any point in a several-minute import:
+//
+//   - each step is recorded in the imports table only once it has finished, so
+//     an interrupted import is retried rather than assumed done
+//   - the importers insert with ON CONFLICT, so replaying one over a partial
+//     table converges instead of duplicating
+//   - downloads land on a .part file and are renamed, so a half-downloaded
+//     source file is never mistaken for a cached one
+//   - the audio pipeline is a state machine that already tolerates restarts
 package bootstrap
 
 import (
@@ -23,43 +30,56 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adityasingh/svenska/api/internal/db"
-	"github.com/adityasingh/svenska/api/internal/lexicon"
+	"github.com/blurrycontour/monoglot/api/internal/db"
+	"github.com/blurrycontour/monoglot/api/internal/lexicon"
 )
 
 // Status is what the app shows while a fresh instance is still filling up. A
 // first start downloads ~250MB of SALDO and imports a million word forms; with
 // no signal for that the library screen just looks broken.
 type Status struct {
-	Running  bool   `json:"running"`
-	Step     string `json:"step,omitempty"`
-	Error    string `json:"error,omitempty"`
-	Complete bool   `json:"complete"`
+	Running bool   `json:"running"`
+	Step    string `json:"step,omitempty"`
+	Error   string `json:"error,omitempty"`
+	// Seconds spent on the current step. The word-form import runs for
+	// minutes, and a screen that says only "importing" for that long is
+	// indistinguishable from one that has hung.
+	Elapsed  int  `json:"elapsed_seconds,omitempty"`
+	Attempt  int  `json:"attempt,omitempty"`
+	Complete bool `json:"complete"`
 }
 
 var (
-	mu    sync.RWMutex
-	state Status
+	mu        sync.RWMutex
+	state     Status
+	stepStart time.Time
+	attempt   int
 )
 
 func Get() Status {
 	mu.RLock()
 	defer mu.RUnlock()
-	return state
+	out := state
+	if out.Running && !stepStart.IsZero() {
+		out.Elapsed = int(time.Since(stepStart).Seconds())
+	}
+	return out
 }
 
 func setStep(step string) {
 	mu.Lock()
-	state = Status{Running: true, Step: step}
+	state = Status{Running: true, Step: step, Attempt: attempt}
+	stepStart = time.Now()
 	mu.Unlock()
 	log.Printf("bootstrap: %s", step)
 }
 
 func finish(err error) {
 	mu.Lock()
+	elapsed := time.Since(stepStart).Round(time.Second)
 	if err != nil {
-		state = Status{Error: err.Error()}
-		log.Printf("bootstrap: FAILED: %v", err)
+		state = Status{Error: err.Error(), Attempt: attempt}
+		log.Printf("bootstrap: FAILED after %s: %v", elapsed, err)
 	} else {
 		state = Status{Complete: true}
 		log.Printf("bootstrap: ready")
@@ -82,31 +102,61 @@ func Needed(ctx context.Context, pool *sql.DB, lang string) bool {
 // the episodes it already has.
 func Run(ctx context.Context, pool *sql.DB, lang string) {
 	if !Needed(ctx, pool, lang) {
+		log.Printf("bootstrap: nothing to do (dictionary and word forms already imported)")
 		finish(nil)
 		return
 	}
 
+	// Retried in place rather than only on the next container restart: the
+	// usual first-boot failure is a source site being briefly unreachable, and
+	// waiting for a human to notice and restart is a poor answer to that.
+	const attempts = 3
+	for attempt = 1; attempt <= attempts; attempt++ {
+		if err := runOnce(ctx, pool, lang); err != nil {
+			finish(err)
+			if attempt == attempts || ctx.Err() != nil {
+				return
+			}
+			wait := time.Duration(attempt) * 30 * time.Second
+			log.Printf("bootstrap: retrying in %s (attempt %d of %d)", wait, attempt+1, attempts)
+			select {
+			case <-time.After(wait):
+			case <-ctx.Done():
+				return
+			}
+			continue
+		}
+		finish(nil)
+		return
+	}
+}
+
+func runOnce(ctx context.Context, pool *sql.DB, lang string) error {
 	if !imported(ctx, pool, "dictionary", lang) {
 		setStep("importing dictionary")
 		if err := ImportDictionary(ctx, pool, lang, ""); err != nil {
-			finish(fmt.Errorf("dictionary: %w", err))
-			return
+			return fmt.Errorf("dictionary: %w", err)
 		}
+		log.Printf("bootstrap: dictionary imported, %d entries",
+			countRows(ctx, pool, "lexemes"))
 	}
 
 	if !imported(ctx, pool, "morphology", lang) {
 		setStep("importing word forms (large download, several minutes)")
 		if err := ImportMorphology(ctx, pool, lang, ""); err != nil {
-			finish(fmt.Errorf("morphology: %w", err))
-			return
+			return fmt.Errorf("word forms: %w", err)
 		}
+		log.Printf("bootstrap: word forms imported, %d forms",
+			countRows(ctx, pool, "forms"))
 	}
 
+	// Not optional: without sqlite_stat1 the planner drives the lookup join
+	// from lexemes and every tap costs milliseconds instead of microseconds.
 	setStep("refreshing query statistics")
 	if err := db.Analyze(ctx, pool); err != nil {
 		log.Printf("bootstrap: WARNING analyze: %v", err)
 	}
-	finish(nil)
+	return nil
 }
 
 // ImportDictionary is a no-op when the import is already recorded, unless

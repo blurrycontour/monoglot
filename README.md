@@ -22,7 +22,7 @@ said is the learning event.
 
 | Piece | Choice |
 |---|---|
-| API | Go 1.26, chi, pgx |
+| API | Go 1.26, chi, database/sql |
 | Database | SQLite (modernc.org/sqlite, pure Go) |
 | Transcription | Python + faster-whisper (CTranslate2), `KBLab/kb-whisper-small` |
 | Client | Native Android — Kotlin, Jetpack Compose, Material 3, Media3/ExoPlayer, Room |
@@ -31,34 +31,64 @@ said is the learning event.
 The Android toolchain runs entirely inside a Docker image; nothing is installed
 on the host.
 
-## Quick start
+## Running it
+
+There is no install script. The server sets itself up on first start:
+migrations, then Folkets lexikon, then the SALDO word forms, then the first
+fetch of episodes. It is idempotent — an interrupted first start picks up where
+it left off, and each step is skipped once recorded. Progress shows on the
+**System** tab and in `docker compose logs -f api`.
+
+**On a production host** — this file, `docker-compose.yml` and `.env` are all
+you need; no checkout, no toolchain:
 
 ```bash
-./bootstrap.sh
+cp .env.example .env
+sed -i "s|^AUTH_TOKEN=.*|AUTH_TOKEN=$(openssl rand -hex 32)|" .env
+docker compose pull
+docker compose up -d
 ```
 
-Goes from a clean checkout to a working instance with Klartext episodes fully
-processed. It is idempotent — re-running is safe and skips completed work.
-
-`bootstrap.sh` returns as soon as audio is downloaded. Transcription is the slow
-step and continues in the background — episodes appear in the app as they
-finish, and the library screen shows how many are still processing.
-
-Then build the app and install it from the phone:
+**On a development machine**, build from source instead:
 
 ```bash
-./scripts/android.sh          # signed release APK
+docker compose up -d --build
 ```
 
-Open `http://<your-lan-ip>:8080/download` on the phone and tap Download. Then
-open the app, go to **Settings**, and enter the server URL and the `AUTH_TOKEN`
-from `.env`.
+Both use the same `docker-compose.yml`. `./data` is a bind mount in both cases,
+so the database, cached audio and the APK are ordinary files you can back up
+and copy.
+
+First start downloads ~250MB of SALDO and imports about a million word forms,
+which takes a few minutes. Transcription is slower still and continues in the
+background — episodes appear in the app as they finish, and the library screen
+shows how many are still processing.
+
+### Getting the app onto the phone
+
+Open `http://<server-ip>:8080/download` and tap Download. Then open the app, go
+to **Settings**, and enter the server URL and the `AUTH_TOKEN` from `.env`.
+
+A production server has no build toolchain, so CI bakes the signed APK into the
+`api` image and `/download` serves that. A development machine serves whatever
+`scripts/android.sh` last put in `./data/apk/`, which takes precedence — a local
+build is available the moment it finishes, with no image rebuild.
+
+```bash
+./scripts/android.sh          # signed release APK -> data/apk/
+```
 
 ### Updating the app
 
 Builds are signed with a persistent key at `android/release.keystore` and carry
-a monotonically increasing `versionCode`, so Android installs each new build
-over the last one, keeping downloads and settings.
+a `versionCode` derived from the clock (minutes since 2024), so Android installs
+each new build over the last one, keeping downloads and settings. The clock is
+what makes local and CI builds interchangeable: a build made later always
+outranks one made earlier, wherever it was built, so you can install a CI build
+today and a local one tomorrow without them fighting.
+
+The same key is used by CI, so one installed app can be pointed at either
+server. To upload it, see [Signing key in CI](#signing-key-in-ci).
 
 **Back up `android/release.keystore` and `android/keystore.properties`.** Both
 are gitignored because they are secrets. If you lose them, Android will reject
@@ -79,9 +109,8 @@ docker compose run --rm api find-program klartext   # if SR renumbers the progra
 cd api && GOWORK=off go test ./...
 ```
 
-The dictionary and morphology imports skip themselves once the tables are
-populated, so re-running `bootstrap.sh` is cheap. To reimport after a dataset
-update:
+The dictionary and morphology imports record themselves in the `imports` table
+and skip on every later start. To reimport after a dataset update:
 
 ```bash
 docker compose run --rm api import-morphology --force
@@ -89,6 +118,36 @@ docker compose run --rm api import-morphology --force
 
 Ingestion also runs in-process nightly at `INGEST_CRON_HOUR:INGEST_CRON_MINUTE`
 (default 03:30, Europe/Stockholm).
+
+## Signing key in CI
+
+CI builds a **debug** APK without these secrets, and refuses to bake a debug
+build into the image — a debug key can never update an installed app. Upload
+the existing key rather than making a new one, so CI and this machine produce
+interchangeable builds:
+
+```bash
+# from the repo root
+gh secret set ANDROID_KEYSTORE_BASE64 < <(base64 -w0 android/release.keystore)
+gh secret set ANDROID_STORE_PASSWORD  --body "$(grep '^storePassword=' android/keystore.properties | cut -d= -f2-)"
+gh secret set ANDROID_KEY_ALIAS       --body "$(grep '^keyAlias='       android/keystore.properties | cut -d= -f2-)"
+gh secret set ANDROID_KEY_PASSWORD    --body "$(grep '^keyPassword='    android/keystore.properties | cut -d= -f2-)"
+```
+
+This puts the key that controls updates to your phone in GitHub's hands, and
+any workflow that can run in this repository can sign as you. That is the price
+of CI producing installable builds; if you would rather not pay it, leave the
+secrets unset and copy the APK to the server yourself.
+
+## Container images
+
+`main` publishes `ghcr.io/blurrycontour/monoglot-api` and `-worker`, tagged
+`latest` and by commit sha. Pull requests build both without pushing. Point a
+host at a different registry or a pinned build with `IMAGE_REGISTRY` and
+`IMAGE_TAG` in `.env`.
+
+GHCR packages are private by default. Either make them public once, or
+`docker login ghcr.io` on the host with a `read:packages` token.
 
 ## How the pipeline works
 
@@ -125,7 +184,8 @@ work on a bus with no signal.
 - Transcription: **~3.3× realtime** on CPU with `kb-whisper-small` int8
 - Lemma resolution: **92.5%** of word tokens
 - Offline definition coverage: **90.1%** of word tokens per episode
-- SALDO: 1.67M inflected forms; Folkets: 36,876 lexemes
+- SALDO: 1.04M inflected forms; Folkets: 36,876 lexemes
+- First start on an empty database: ~90s with SALDO cached, a few minutes without
 
 Note: transcription and the Android build are both disk-hungry. Keep several GB
 free; `docker builder prune -af` reclaims the most.
@@ -190,6 +250,8 @@ redistribute cached audio.
   prior approval.
 - **8 Sidor** — daily podcast audio.
 - **Folkets lexikon** (KTH/CSC) — CC BY-SA 2.5.
+- **MyMemory** — machine-translation fallback for words the dictionary lacks,
+  used within its anonymous quota. `TRANSLATE_FALLBACK=0` disables it.
 - **SALDO** (Språkbanken, University of Gothenburg) — CC BY-SA 2.5 / LGPL 3.0.
 - **KB-Whisper** (KBLab, National Library of Sweden).
 

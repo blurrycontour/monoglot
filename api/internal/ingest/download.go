@@ -109,7 +109,7 @@ func downloadItem(ctx context.Context, pool *sql.DB, audioDir string, id int, ur
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "svenska-listening-trainer/1.0 (personal use)")
+	req.Header.Set("User-Agent", "monoglot/1.0 (personal use)")
 
 	client := &http.Client{Timeout: 15 * time.Minute}
 	resp, err := client.Do(req)

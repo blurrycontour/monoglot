@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/adityasingh/svenska/api/internal/db"
-	"github.com/adityasingh/svenska/api/internal/lexicon"
+	"github.com/blurrycontour/monoglot/api/internal/db"
+	"github.com/blurrycontour/monoglot/api/internal/lexicon"
 )
 
 type SourceRow struct {

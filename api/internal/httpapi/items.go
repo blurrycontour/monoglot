@@ -4,7 +4,7 @@ import (
 	"database/sql"
 
 	"errors"
-	"github.com/adityasingh/svenska/api/internal/db"
+	"github.com/blurrycontour/monoglot/api/internal/db"
 	"net/http"
 	"os"
 	"time"

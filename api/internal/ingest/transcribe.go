@@ -15,7 +15,7 @@ import (
 
 	"database/sql"
 
-	"github.com/adityasingh/svenska/api/internal/lexicon"
+	"github.com/blurrycontour/monoglot/api/internal/lexicon"
 )
 
 // Word and Segment mirror the worker's JSON contract. The worker speaks in

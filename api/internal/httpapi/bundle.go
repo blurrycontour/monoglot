@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/adityasingh/svenska/api/internal/lexicon"
+	"github.com/blurrycontour/monoglot/api/internal/lexicon"
 )
 
 // Bundle is everything the client needs to play an item with no network at

@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/adityasingh/svenska/api/internal/db"
-	"github.com/adityasingh/svenska/api/internal/lexicon"
+	"github.com/blurrycontour/monoglot/api/internal/db"
+	"github.com/blurrycontour/monoglot/api/internal/lexicon"
 )
 
 type SourceStats struct {
@@ -154,7 +154,7 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 	info.Storage.AudioBytes = dirSize(s.cfg.AudioDir)
 	info.Storage.RawBytes = dirSize(s.cfg.RawDir)
 	info.Storage.CacheBytes = dirSize(os.Getenv("DATA_CACHE_DIR"))
-	if fi, err := os.Stat(s.cfg.APKPath); err == nil {
+	if fi, err := os.Stat(s.apkPath()); err == nil {
 		info.Storage.APKBytes = fi.Size()
 	}
 	info.Storage.TotalBytes = info.Storage.AudioBytes + info.Storage.RawBytes +

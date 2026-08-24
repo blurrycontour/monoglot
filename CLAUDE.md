@@ -24,23 +24,23 @@ scripts/   android.sh builds the APK inside Docker.
 ```
 
 ```bash
-./bootstrap.sh                              # checkout -> running instance
+docker compose up -d --build                # dev; prod does `pull && up -d`
 ./scripts/android.sh                        # signed release APK -> data/apk/
 docker compose run --rm api ingest discover # or download | transcribe | all
 cd api && GOWORK=off go test ./...
 ```
 
-`docker-compose.yml` is the production file: it pulls `ghcr.io/blurrycontour/
-monoglot-{api,worker}` into a named volume, and the API imports the dictionary
-and word forms itself on first start, so a bare host needs only that file and a
-`.env`. `docker-compose.override.yml` is merged in on a checkout and switches
-to building from source with `./data` bind-mounted.
+One compose file for both machines, `./data` bind-mounted in both. There is no
+install script: `internal/bootstrap` imports the dictionary and word forms on
+first start, so a prod host needs only `docker-compose.yml` and a `.env`. CI
+bakes the signed APK into the api image; on disk it takes precedence, so a
+local build is served at once.
 
 `GOWORK=off` is mandatory: a parent `go.work` at `~/repos/go.work` otherwise
 captures this module.
 
 `applicationId` is `io.blurrycontour.monoglot`; the Kotlin package is still
-`se.svenska.trainer` (internal, not worth renaming). Changing `applicationId`
+`io.blurrycontour.monoglot` (internal, not worth renaming). Changing `applicationId`
 again means a fresh install, not an update: local settings and downloads go.
 
 ## Traps
@@ -69,6 +69,8 @@ again means a fresh install, not an update: local settings and downloads go.
 - **`scripts/android.sh` publishes only on release tasks** and reads the version
   back out of the built APK. A stale APK under a fresh versionCode makes the
   in-app updater loop forever.
+- **`versionCode` is minutes since 2024**, so a later build always outranks an
+  earlier one wherever it was built. Do not make it a commit count.
 - **Disk is tight**; `docker builder prune -af` reclaims the most. Always check
   build exit status — a failure piped through `tail` silently keeps the old
   image running.

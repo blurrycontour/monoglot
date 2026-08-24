@@ -19,25 +19,22 @@ val keystoreProps = Properties().apply {
 val hasKeystore = keystoreProps.getProperty("storeFile") != null
 
 android {
-    namespace = "se.svenska.trainer"
+    namespace = "io.blurrycontour.monoglot"
     compileSdk = 35
     // Pinned to what the build image ships. Without this AGP tries to
     // auto-install a different version into a read-only SDK directory.
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        // The install identity. Changed from se.svenska.trainer once, with the
-        // Monoglot rebrand: Android treats a new applicationId as a different
-        // app, so that build had to be installed fresh rather than as an
-        // update. Do not change it again for cosmetic reasons.
-        //
-        // The Kotlin namespace stays se.svenska.trainer: it is internal, and
-        // renaming it would touch every file for no behavioural gain.
+        // The install identity. Android treats a new applicationId as a
+        // different app: changing it means a fresh install, not an update, and
+        // the old one has to be removed by hand. Do not change it again.
         applicationId = "io.blurrycontour.monoglot"
         minSdk = 26
         targetSdk = 35
-        // Must increase for Android to accept an update. Supplied by the
-        // build script from the git commit count; falls back to 1 locally.
+        // Must increase for Android to accept an update. Supplied by
+        // scripts/android.sh as minutes since 2024, which is monotonic for any
+        // build anywhere; falls back to 1 for a bare gradle invocation.
         versionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 1
         versionName = (project.findProperty("appVersionName") as String?) ?: "1.0"
     }

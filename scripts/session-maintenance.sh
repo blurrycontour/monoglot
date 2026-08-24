@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Session maintenance: refresh content and reclaim Docker disk.
+# Session maintenance: rebuild, restart, reclaim Docker disk.
 #
-# Wired to the Stop hook, so it runs after every assistant turn. bootstrap.sh
-# rebuilds images and runs discovery, which takes minutes, so this detaches
-# immediately and a lockfile makes overlapping runs a no-op. Output goes to
-# data/maintenance.log, never to the transcript.
+# Wired to the Stop hook, so it runs after every assistant turn. The rebuild
+# takes minutes, so this detaches immediately and a lockfile makes overlapping
+# runs a no-op. Output goes to data/maintenance.log, never to the transcript.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,7 +23,7 @@ fi
 
   {
     echo "=== $(date -Is) maintenance start ==="
-    "$ROOT/bootstrap.sh" || echo "bootstrap failed with $?"
+    (cd "$ROOT" && docker compose up -d --build) || echo "compose failed with $?"
     # Build cache is the single biggest reclaimable consumer on this box and
     # regenerates on demand.
     docker builder prune -af || true

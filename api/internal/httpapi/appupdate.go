@@ -25,11 +25,11 @@ type AppVersion struct {
 func (s *Server) appVersion(w http.ResponseWriter, r *http.Request) {
 	out := AppVersion{DownloadURL: "/download/monoglot.apk"}
 
-	manifest := filepath.Join(filepath.Dir(s.cfg.APKPath), "version.json")
+	manifest := filepath.Join(s.apkDir(), "version.json")
 	if b, err := os.ReadFile(manifest); err == nil {
 		json.Unmarshal(b, &out)
 	}
-	if fi, err := os.Stat(s.cfg.APKPath); err == nil {
+	if fi, err := os.Stat(s.apkPath()); err == nil {
 		out.Available = true
 		if out.SizeBytes == 0 {
 			out.SizeBytes = fi.Size()
