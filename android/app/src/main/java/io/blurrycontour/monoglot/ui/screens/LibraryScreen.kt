@@ -329,6 +329,19 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(archived = emptyList(), moreExhausted = false)
     }
 
+    /** Re-reads the part of the archive already on screen, so an item that has
+     *  just been cancelled reappears there — that is where it can be fetched
+     *  again — and one that has just been queued drops out. */
+    private suspend fun reloadArchived() {
+        val shown = _state.value.archived.size
+        if (shown == 0) return
+        val limit = maxOf(shown, 10)
+        val page = runCatching {
+            repo.api.archivedItems(_state.value.sourceFilter, offset = 0, limit = limit)
+        }.getOrNull() ?: return
+        _state.value = _state.value.copy(archived = page, moreExhausted = page.size < limit)
+    }
+
     /** Whether this source has anything left to reveal. Checked once per
      *  source so the button is not offered where it would do nothing. */
     private suspend fun probeArchived(slug: String?): Boolean =
@@ -344,10 +357,20 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             )
             runCatching { repo.api.cancelItem(itemId) }
             runCatching { repo.removeDownload(itemId) }
+            _state.value = _state.value.copy(
+                // A cancelled episode leaves the batch, it does not complete
+                // it. Without shrinking the high-water mark the banner kept
+                // the old total and counted the cancellation as progress.
+                batchTotal = (_state.value.batchTotal - 1).coerceAtLeast(0),
+                // It is back in the archive now, so it must stop looking like
+                // a fetch still in flight if it reappears under "Not fetched".
+                fetchingIds = _state.value.fetchingIds - itemId,
+            )
             refreshMeta()
             repo.items(_state.value.sourceFilter).onSuccess {
                 _state.value = _state.value.copy(items = it)
             }
+            reloadArchived()
             _state.value = _state.value.copy(
                 cancellingIds = _state.value.cancellingIds - itemId,
             )
@@ -358,7 +381,16 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     fun fetch(item: ItemSummary) {
         viewModelScope.launch {
             _state.value = _state.value.copy(fetchingIds = _state.value.fetchingIds + item.id)
-            runCatching { repo.api.restoreItem(item.id) }
+            val queued = runCatching { repo.api.restoreItem(item.id) }.isSuccess
+            _state.value = _state.value.copy(
+                // Once queued the item belongs to the pipeline, not to the
+                // archive: leaving it in the revealed list spun its indicator
+                // for the life of the screen, including after a cancel put it
+                // back. The banner and the queue sheet track it from here.
+                archived = if (queued) _state.value.archived.filterNot { it.id == item.id }
+                           else _state.value.archived,
+                fetchingIds = _state.value.fetchingIds - item.id,
+            )
             refreshMetaPublic()
         }
     }
