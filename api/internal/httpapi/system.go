@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blurrycontour/monoglot/api/internal/db"
+	"github.com/blurrycontour/monoglot/api/internal/ingest"
 	"github.com/blurrycontour/monoglot/api/internal/lexicon"
 )
 
@@ -261,7 +262,16 @@ func (s *Server) cancelItem(w http.ResponseWriter, r *http.Request) {
 	// attempts is reset so fetching it again later starts with a clean slate
 	// rather than one retry away from being given up on.
 	s.pool.ExecContext(r.Context(), `UPDATE items SET attempts=0, error=NULL WHERE id=?`, id)
-	log.Printf("cancel item %d (was %s)", id, status)
+
+	// Stop waiting on the worker, if this was the item it is chewing on. The
+	// worker runs to completion regardless, but the pipeline was otherwise
+	// parked on a result it had already decided to discard — so everything
+	// else in the queue sat in 'new' until that finished.
+	aborted := ingest.AbortTranscription(id)
+	// And start a run, since cancelling is usually how room is made for
+	// something else. A run already in flight records this and repeats.
+	s.runner.Trigger("cancel")
+	log.Printf("cancel item %d (was %s, worker call aborted=%t)", id, status, aborted)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "cancelled": status})
 }
 

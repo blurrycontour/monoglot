@@ -19,6 +19,10 @@ type Runner struct {
 
 	mu      sync.Mutex
 	running bool
+	// Set when a trigger arrives mid-run. The trigger cannot start a second
+	// run — transcription must stay serial — but dropping it silently meant
+	// work queued during a run waited for the watchdog.
+	rerun bool
 }
 
 func NewRunner(pool *sql.DB, cfg config.Config) *Runner {
@@ -31,27 +35,39 @@ func (r *Runner) Running() bool {
 	return r.running
 }
 
-// Trigger starts a run in the background. Returns false if one is already going.
+// Trigger starts a run in the background. Returns false if one is already
+// going — in which case the request is remembered and honoured as soon as the
+// current run finishes, rather than dropped.
 func (r *Runner) Trigger(reason string) bool {
 	r.mu.Lock()
 	if r.running {
+		r.rerun = true
 		r.mu.Unlock()
 		return false
 	}
 	r.running = true
+	r.rerun = false
 	r.mu.Unlock()
 
 	go func() {
-		defer func() {
+		for {
+			// Detached from any request context: a manual trigger must not be
+			// cancelled when the HTTP client hangs up.
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
+			r.Run(ctx, reason)
+			cancel()
+
 			r.mu.Lock()
-			r.running = false
+			again := r.rerun
+			r.rerun = false
+			if !again {
+				r.running = false
+				r.mu.Unlock()
+				return
+			}
 			r.mu.Unlock()
-		}()
-		// Detached from any request context: a manual trigger must not be
-		// cancelled when the HTTP client hangs up.
-		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
-		defer cancel()
-		r.Run(ctx, reason)
+			reason = "queued during the previous run"
+		}
 	}()
 	return true
 }
@@ -71,51 +87,71 @@ func (r *Runner) Run(ctx context.Context, reason string) {
 	if err := Discover(ctx, r.pool); err != nil {
 		log.Printf("ERROR ingest: discover: %v", err)
 	}
-	if err := DownloadPending(ctx, r.pool, r.cfg.AudioDir, 40); err != nil {
-		log.Printf("ERROR ingest: download: %v", err)
-	}
-	// Drain the queue rather than doing a fixed five and stopping. A single
-	// batch left items sitting in 'downloaded' with nothing scheduled to pick
-	// them up until the next nightly run, so the app reported episodes as
-	// preparing for hours while nothing was happening.
-	for pass := 0; ; pass++ {
-		remaining, err := countPending(ctx, r.pool)
-		if err != nil {
-			log.Printf("ERROR ingest: counting pending: %v", err)
-			break
-		}
-		if remaining == 0 {
-			log.Printf("ingest: transcription queue empty")
-			break
-		}
-		log.Printf("ingest: %d item(s) to transcribe (pass %d)", remaining, pass+1)
 
-		if err := TranscribePending(ctx, r.pool, r.cfg.WorkerURL, r.cfg.RawDir, 5); err != nil {
-			log.Printf("ERROR ingest: transcribe: %v", err)
+	// Download and transcription alternate, one transcription at a time.
+	//
+	// The stages used to run strictly in sequence — download everything, then
+	// drain the transcription queue — so anything queued after the run had
+	// passed the download stage sat in 'new' behind every remaining
+	// transcription, and then behind the watchdog's five-minute tick.
+	// Downloading is I/O in seconds; there is no reason for it to wait on
+	// minutes of CPU.
+	for cycle := 0; cycle < maxCycles; cycle++ {
+		downloadable, err := countDownloadable(ctx, r.pool)
+		if err != nil {
+			log.Printf("ERROR ingest: counting downloadable: %v", err)
 			break
 		}
-		// Guard against a stage that fails without changing status, which
-		// would otherwise spin here forever. Say why: a silent exit here left
-		// episodes reading as "preparing" with nothing in the log to explain
-		// it, and the watchdog below then retried it every five minutes.
-		after, err := countPending(ctx, r.pool)
+		pending, err := countPending(ctx, r.pool)
 		if err != nil {
 			log.Printf("ERROR ingest: counting pending: %v", err)
 			break
 		}
-		if after >= remaining {
-			log.Printf("ingest: stopping, no progress this pass (%d before, %d after) — "+
-				"see items.error for why", remaining, after)
+		if downloadable == 0 && pending == 0 {
+			log.Printf("ingest: queue empty")
 			break
+		}
+		log.Printf("ingest: %d to download, %d to transcribe (cycle %d)",
+			downloadable, pending, cycle+1)
+
+		if downloadable > 0 {
+			if err := DownloadPending(ctx, r.pool, r.cfg.AudioDir, 40); err != nil {
+				log.Printf("ERROR ingest: download: %v", err)
+			}
+		}
+		if pending > 0 {
+			// One item per cycle, and re-selected each time: a batch picked up
+			// front goes stale the moment anything is cancelled.
+			if err := TranscribePending(ctx, r.pool, r.cfg.WorkerURL, r.cfg.RawDir, 1); err != nil {
+				log.Printf("ERROR ingest: transcribe: %v", err)
+				break
+			}
 		}
 		if ctx.Err() != nil {
 			log.Printf("ingest: stopping, context ended: %v", ctx.Err())
+			break
+		}
+
+		// Guard against a stage that fails without changing status, which would
+		// otherwise spin here forever. Say why: a silent exit here left episodes
+		// reading as "preparing" with nothing in the log to explain it.
+		d, _ := countDownloadable(ctx, r.pool)
+		p, _ := countPending(ctx, r.pool)
+		if d >= downloadable && p >= pending {
+			log.Printf("ingest: stopping, no progress this cycle "+
+				"(%d/%d before, %d/%d after) — see items.error for why",
+				downloadable, pending, d, p)
 			break
 		}
 	}
 
 	log.Printf("ingest: run done in %s", time.Since(start).Round(time.Second))
 }
+
+// maxCycles bounds the alternation. One transcription per cycle, so reaching
+// it means new work has been arriving for as long as the run has been going;
+// the run ends and the watchdog picks up the rest.
+const maxCycles = 200
 
 // StartCron runs the pipeline daily at the configured local time. In-process
 // rather than an external scheduler: fewer moving parts, per the spec.
@@ -248,6 +284,17 @@ func countPending(ctx context.Context, pool *sql.DB) (int, error) {
 	err := pool.QueryRowContext(ctx,
 		`SELECT count(*) FROM items
 		 WHERE status = 'downloaded' AND audio_path IS NOT NULL`).Scan(&n)
+	return n, err
+}
+
+// countDownloadable must match DownloadPending's selection, for the same
+// reason countPending must match the transcriber's: a count that disagrees
+// with what the stage actually does turns a loop guard into a stall.
+func countDownloadable(ctx context.Context, pool *sql.DB) (int, error) {
+	var n int
+	err := pool.QueryRowContext(ctx, `
+		SELECT count(*) FROM items
+		WHERE status = 'new' AND audio_url IS NOT NULL AND audio_url <> ''`).Scan(&n)
 	return n, err
 }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -94,6 +95,39 @@ func TranscribePending(ctx context.Context, pool *sql.DB, workerURL, rawDir stri
 // changed under us, which is exactly what cancelling does.
 var errSkip = errors.New("no longer pending")
 
+// Worker calls currently in flight, so a cancellation can stop waiting on one.
+// The worker itself cannot be interrupted — it is mid-inference and will run
+// to completion — but nothing here needs to wait for a result it will discard.
+var (
+	inFlightMu sync.Mutex
+	inFlight   = map[int]context.CancelFunc{}
+)
+
+func registerTranscription(id int, abort context.CancelFunc) {
+	inFlightMu.Lock()
+	inFlight[id] = abort
+	inFlightMu.Unlock()
+}
+
+func unregisterTranscription(id int) {
+	inFlightMu.Lock()
+	delete(inFlight, id)
+	inFlightMu.Unlock()
+}
+
+// AbortTranscription stops waiting on the worker call for an item, if one is
+// in flight. Reports whether there was one.
+func AbortTranscription(id int) bool {
+	inFlightMu.Lock()
+	abort, ok := inFlight[id]
+	delete(inFlight, id)
+	inFlightMu.Unlock()
+	if ok {
+		abort()
+	}
+	return ok
+}
+
 func transcribeItem(ctx context.Context, pool *sql.DB, workerURL, rawDir string, id int, audioPath string) error {
 	// Re-read the row rather than trusting the batch. TranscribePending picks
 	// five jobs up front and then works through them one at a time, so by the
@@ -120,8 +154,21 @@ func transcribeItem(ctx context.Context, pool *sql.DB, workerURL, rawDir string,
 		return err
 	}
 
-	resp, err := callWorker(ctx, workerURL, audioPath, asr)
+	// The worker call is registered so that cancelling this item can abort it.
+	// Without that, cancelling an episode mid-transcription left the pipeline
+	// parked on a request whose result was going to be thrown away, and every
+	// other queued episode waited behind it.
+	callCtx, abort := context.WithCancel(ctx)
+	registerTranscription(id, abort)
+	resp, err := callWorker(callCtx, workerURL, audioPath, asr)
+	unregisterTranscription(id)
+	abort()
 	if err != nil {
+		// Aborted here, not upstream: the user cancelled the item. Not a
+		// failure, and specifically not something to retry.
+		if callCtx.Err() != nil && ctx.Err() == nil {
+			return errSkip
+		}
 		return err
 	}
 	if len(resp.Segments) == 0 {
