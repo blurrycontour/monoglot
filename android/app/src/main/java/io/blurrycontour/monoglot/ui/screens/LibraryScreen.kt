@@ -229,6 +229,9 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(
             sourceFilter = slug, loading = true,
             archived = emptyList(), moreExhausted = false,
+            // The high-water mark belongs to the previous scope. Keeping it
+            // made the banner read "27 / 36" for a source with nine items.
+            batchTotal = 0, status = null,
         )
         viewModelScope.launch {
             // The banner is scoped to the chip, so it has to be refetched here
@@ -1105,11 +1108,24 @@ private fun QueueSheet(items: List<PipelineItem>, onDismiss: () -> Unit) {
                     StageDot(item.status)
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
+                        val date = Dates.label(Dates.parse(item.publishedAt))
                         Text(
-                            Dates.label(Dates.parse(item.publishedAt)),
+                            if (date == "—") item.title.ifBlank { "Episode ${item.id}" }
+                            else date,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
+                        if (date != "—" && item.title.isNotBlank()) {
+                            Text(
+                                item.title,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         Text(
                             stageLabel(item),
                             style = MaterialTheme.typography.labelSmall,

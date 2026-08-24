@@ -42,14 +42,24 @@ else
   fi
 fi
 
-docker volume create monoglot-gradle-cache >/dev/null
-docker run --rm -v monoglot-gradle-cache:/gradle-cache "$IMAGE" \
-  chown -R "$(id -u):$(id -g)" /gradle-cache
+# Gradle's home: dependencies, transformed artifacts and the build cache, ~1.7GB
+# once warm. A docker volume by default, which is right on a machine that keeps
+# its state; CI sets GRADLE_CACHE_DIR to a path under the workspace instead,
+# because actions/cache can save a directory and cannot save a volume.
+if [ -n "${GRADLE_CACHE_DIR:-}" ]; then
+  mkdir -p "$GRADLE_CACHE_DIR"
+  GRADLE_MOUNT="$GRADLE_CACHE_DIR"
+else
+  docker volume create monoglot-gradle-cache >/dev/null
+  docker run --rm -v monoglot-gradle-cache:/gradle-cache "$IMAGE" \
+    chown -R "$(id -u):$(id -g)" /gradle-cache
+  GRADLE_MOUNT=monoglot-gradle-cache
+fi
 
 run_in_container() {
   docker run --rm \
     -v "$ROOT/android:/workspace" \
-    -v monoglot-gradle-cache:/gradle-cache \
+    -v "$GRADLE_MOUNT:/gradle-cache" \
     -u "$(id -u):$(id -g)" \
     -e GRADLE_USER_HOME=/gradle-cache \
     -e HOME=/tmp \
@@ -99,9 +109,17 @@ TASK="${1:-assembleRelease}"
 shift || true
 
 echo "==> gradle $TASK (versionCode=$VERSION_CODE versionName=$VERSION_NAME)"
+# lintVitalRelease runs as part of assembleRelease and adds most of a minute
+# for a single-module app whose only reader is its author. GRADLE_LINT=1 puts
+# it back.
+LINT_ARGS=()
+if [ "${GRADLE_LINT:-0}" != "1" ]; then
+  LINT_ARGS=(-x lintVitalAnalyzeRelease -x lintVitalReportRelease -x lintVitalRelease)
+fi
+
 run_in_container gradle --no-daemon "$TASK" \
   -PappVersionCode="$VERSION_CODE" \
-  -PappVersionName="$VERSION_NAME" "$@"
+  -PappVersionName="$VERSION_NAME" "${LINT_ARGS[@]}" "$@"
 
 # Publish only when this invocation actually produced a release APK. A stale
 # APK from an earlier build must never be republished under a fresh version

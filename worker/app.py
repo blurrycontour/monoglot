@@ -23,6 +23,21 @@ logging.basicConfig(
 )
 log = logging.getLogger("worker")
 
+
+class _DropHealthChecks(logging.Filter):
+    """Keep the container health check out of the log.
+
+    Compose polls /health continuously, and uvicorn logs an access line for
+    every one of them. Nothing that matters here — a transcription starting,
+    a model load, a failure — survives that volume.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/health" not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(_DropHealthChecks())
+
 MODEL_NAME = os.getenv("WHISPER_MODEL", "KBLab/kb-whisper-small")
 DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")

@@ -25,6 +25,8 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+# Gradle home when it is cached as a directory rather than a docker volume.
+.gradle-cache/
 .kotlin/
 android/.kotlin/
 

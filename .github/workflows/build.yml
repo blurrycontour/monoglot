@@ -64,6 +64,17 @@ jobs:
       - name: Owner in lowercase
         run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
+      # Gradle's home is the rest of the APK build time: ~420MB of dependencies
+      # and ~1.2GB of transformed artifacts that a fresh runner would otherwise
+      # download and re-derive every run. The toolchain image only ever covered
+      # the SDK and Gradle itself.
+      - name: Cache Gradle home
+        uses: actions/cache@v4
+        with:
+          path: .gradle-cache
+          key: gradle-${{ hashFiles('android/gradle/libs.versions.toml', 'android/**/*.gradle.kts') }}
+          restore-keys: gradle-
+
       - name: Choose task
         id: task
         run: |
@@ -81,6 +92,7 @@ jobs:
       # the clock, so a later local build always outranks a CI one.
       - name: Build APK
         env:
+          GRADLE_CACHE_DIR: ${{ github.workspace }}/.gradle-cache
           ANDROID_BUILD_REGISTRY: ghcr.io/${{ env.OWNER }}
           # Publish a newly built toolchain only from main. A pull request that
           # changes Dockerfile.build still builds it, and still gets a working

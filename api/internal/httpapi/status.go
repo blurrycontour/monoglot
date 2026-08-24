@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/blurrycontour/monoglot/api/internal/bootstrap"
+	"github.com/blurrycontour/monoglot/api/internal/db"
 )
 
 // PipelineStatus lets the app show what the server is still working on, so a
@@ -31,13 +33,17 @@ type PipelineStatus struct {
 }
 
 type PipelineItem struct {
-	ID          int    `json:"id"`
-	SourceSlug  string `json:"source_slug"`
-	Title       string `json:"title"`
-	PublishedAt string `json:"published_at,omitempty"`
-	Status      string `json:"status"`
-	Attempts    int    `json:"attempts"`
-	Error       string `json:"error,omitempty"`
+	ID         int    `json:"id"`
+	SourceSlug string `json:"source_slug"`
+	Title      string `json:"title"`
+	// A *time.Time, not the raw column: SQLite stores 'YYYY-MM-DD HH:MM:SS',
+	// which is not what the client parses. Every other timestamp in this API
+	// is RFC3339 and this one silently was not, so every row in the queue
+	// sheet rendered as a dash.
+	PublishedAt *time.Time `json:"published_at,omitempty"`
+	Status      string     `json:"status"`
+	Attempts    int        `json:"attempts"`
+	Error       string     `json:"error,omitempty"`
 }
 
 func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +114,7 @@ func (s *Server) pipelineStatus(w http.ResponseWriter, r *http.Request) {
 // said. Ordered by stage so the thing being worked on right now is at the top.
 func (s *Server) pipelineItems(r *http.Request, source string) ([]PipelineItem, error) {
 	rows, err := s.pool.QueryContext(r.Context(), `
-		SELECT i.id, s.slug, i.title, COALESCE(i.published_at,''), i.status,
+		SELECT i.id, s.slug, i.title, i.published_at, i.status,
 		       i.attempts, COALESCE(i.error,'')
 		FROM items i JOIN sources s ON s.id = i.source_id
 		WHERE i.status IN ('new','downloading','downloaded','transcribing','failed')
@@ -129,9 +135,14 @@ func (s *Server) pipelineItems(r *http.Request, source string) ([]PipelineItem, 
 	out := []PipelineItem{}
 	for rows.Next() {
 		var it PipelineItem
-		if err := rows.Scan(&it.ID, &it.SourceSlug, &it.Title, &it.PublishedAt,
+		var published db.NullTime
+		if err := rows.Scan(&it.ID, &it.SourceSlug, &it.Title, &published,
 			&it.Status, &it.Attempts, &it.Error); err != nil {
 			return nil, err
+		}
+		if published.Valid {
+			t := published.Time
+			it.PublishedAt = &t
 		}
 		out = append(out, it)
 	}
