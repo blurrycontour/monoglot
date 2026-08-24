@@ -970,7 +970,7 @@ private fun ProcessingBanner(
                 // takes about a minute per five-minute episode on CPU.
                 Text(
                     buildList {
-                        if (status.transcribing > 0) add("transcribing ${status.transcribing}")
+                        if (status.transcribing > 0) add("${status.transcribing} transcribing")
                         if (status.queued > 0) add("${status.queued} queued")
                         if (status.downloading > 0) add("${status.downloading} downloading")
                     }.joinToString(" · ").ifEmpty { "working" },

@@ -222,7 +222,7 @@ fun SystemScreen(visible: Boolean = true) {
                 // Listening progress, the number that actually reflects the point
                 // of the app.
                 SectionCard("Progress") {
-                    StatRow("Episodes finished", "${sys.items.completed} of ${sys.items.ready}")
+                    StatRow("Episodes finished", "${sys.items.completed}")
                     StatRow("In progress", "${sys.items.started}")
                     StatRow("Time listened", formatHours(sys.listenedMs))
                     StatRow("Words looked up", "${sys.vocabulary.lookups}")
