@@ -23,6 +23,7 @@ fi
 
   {
     echo "=== $(date -Is) maintenance start ==="
+    (cd "$ROOT" && ./scripts/android.sh) || echo "android.sh failed with $?"
     (cd "$ROOT" && docker compose up -d --build) || echo "compose failed with $?"
     # Build cache is the single biggest reclaimable consumer on this box and
     # regenerates on demand.
