@@ -82,6 +82,10 @@ def get_model() -> WhisperModel:
     return _model
 
 
+class CancelRequest(BaseModel):
+    audio_path: str
+
+
 class TranscribeRequest(BaseModel):
     audio_path: str
     # ASR language hint, supplied per item by the API. Defaults to Swedish
@@ -94,6 +98,36 @@ class TranscribeRequest(BaseModel):
 # assignment per segment: the loop that builds the response is already walking
 # it, and nothing extra is computed.
 _progress: dict = {"path": None, "fraction": 0.0, "started": 0.0, "duration": 0.0}
+
+# Paths whose transcription has been cancelled. faster-whisper hands back a
+# generator, so the segment loop below is the one place this process is
+# interruptible: checking a set between segments costs nothing and gives up
+# the CPU within one segment rather than at the end of the episode.
+#
+# The alternative — restarting the container — would also work, and the API
+# can reach the docker socket, but it throws away the loaded model (45s to
+# reload) and would interrupt whatever the worker moves on to next.
+_cancelled: set = set()
+_cancel_lock = threading.Lock()
+
+
+class Cancelled(Exception):
+    """Raised out of the segment loop when the API cancels the item."""
+
+
+@app.post("/cancel")
+def cancel(req: CancelRequest):
+    """Stop transcribing one path, if it is the one in flight.
+
+    Idempotent, and safe to call for a path that is not running: the entry is
+    dropped when the job it refers to notices it, and cleared on the next
+    transcription of the same path.
+    """
+    with _cancel_lock:
+        _cancelled.add(req.audio_path)
+    running = _progress.get("path") == req.audio_path
+    log.info("cancel requested for %s (running=%s)", req.audio_path, running)
+    return {"status": "ok", "running": running}
 
 
 @app.get("/progress")
@@ -140,6 +174,11 @@ def transcribe(req: TranscribeRequest):
     t0 = time.time()
 
     with _transcribe_lock:
+        # A cancel that arrived while this path was queued still applies: it
+        # was asked for after the request was made. One that predates the
+        # request does not — the item has been queued again since.
+        with _cancel_lock:
+            _cancelled.discard(req.audio_path)
         _progress.update({
             "path": req.audio_path, "fraction": 0.0,
             "started": time.time(), "duration": 0.0,
@@ -160,9 +199,17 @@ def transcribe(req: TranscribeRequest):
         _progress["duration"] = float(info.duration or 0)
 
         out_segments = []
+        cancelled = False
         for seg in segments:
             # The generator is consumed lazily, so seg.end is genuinely how far
-            # through the audio the model has got.
+            # through the audio the model has got — and this is the point at
+            # which the work can be abandoned.
+            with _cancel_lock:
+                cancelled = req.audio_path in _cancelled
+                if cancelled:
+                    _cancelled.discard(req.audio_path)
+            if cancelled:
+                break
             if _progress["duration"]:
                 _progress["fraction"] = min(1.0, float(seg.end) / _progress["duration"])
             words = []
@@ -185,6 +232,16 @@ def transcribe(req: TranscribeRequest):
     _progress.update({"path": None, "fraction": 0.0, "started": 0.0, "duration": 0.0})
     _last_used = time.time()
     elapsed = time.time() - t0
+
+    if cancelled:
+        log.info(
+            "cancelled %s after %.1fs (%d segments discarded)",
+            req.audio_path, elapsed, len(out_segments),
+        )
+        # 409 rather than 200-with-nothing: the API must be able to tell an
+        # abandoned job from an episode that genuinely has no speech in it.
+        raise HTTPException(status_code=409, detail="cancelled")
+
     n_words = sum(len(s["words"]) for s in out_segments)
     log.info(
         "transcribed %s [%s]: %d segments, %d words, %.1fs audio in %.1fs (%.1fx)",

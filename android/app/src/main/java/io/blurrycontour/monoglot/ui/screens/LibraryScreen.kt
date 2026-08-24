@@ -102,6 +102,11 @@ data class LibraryState(
  *  gesture that did not register. */
 private const val MIN_REFRESH_MS = 550L
 
+/** Poll interval while the queue is visibly moving, and the ceiling it backs
+ *  off to when nothing has changed. */
+private const val FAST_POLL_MS = 6_000L
+private const val SLOW_POLL_MS = 60_000L
+
 class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = Graph.repository
     private val _state = MutableStateFlow(LibraryState())
@@ -198,7 +203,8 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private fun startPolling() {
         if (pollJob?.isActive == true) return
         pollJob = viewModelScope.launch {
-            var interval = 6_000L
+            var interval = FAST_POLL_MS
+            var signature = _state.value.status?.let(::pipelineSignature)
             while (visible) {
                 delay(interval)
                 if (!visible) break
@@ -208,18 +214,52 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                     status = status, batchTotal = batchTotalFor(status),
                 )
                 if (status.ready != before) {
-                    interval = 6_000L
                     repo.items(_state.value.sourceFilter).onSuccess {
                         _state.value = _state.value.copy(items = it)
                     }
-                } else {
-                    interval = (interval * 3 / 2).coerceAtMost(60_000L)
                 }
+                // Back off on a queue that is not moving — but "moving" means
+                // any stage change, not just an episode becoming playable.
+                // Keyed on `ready` alone, the interval sat at its 60s ceiling
+                // for the whole of a transcription, so an item that had since
+                // been downloaded still read as "waiting to download" until
+                // the app was reopened and refreshed from scratch.
+                val now = pipelineSignature(status)
+                interval = when {
+                    queueOpen -> FAST_POLL_MS
+                    now != signature -> FAST_POLL_MS
+                    else -> (interval * 3 / 2).coerceAtMost(SLOW_POLL_MS)
+                }
+                signature = now
                 if (status.processing == 0 && !status.ingestRunning) break
             }
             pollJob = null
         }
     }
+
+    /** Everything the queue view renders, in one comparable value. Two polls
+     *  with the same signature genuinely showed the same thing. */
+    private fun pipelineSignature(status: PipelineStatus): String =
+        buildString {
+            append(status.ready).append('/').append(status.processing)
+            append('/').append(status.failed).append('/').append(status.archived)
+            status.items.forEach { append('|').append(it.id).append(it.status).append(it.attempts) }
+        }
+
+    /** The queue sheet is the one place stage changes are read closely, so
+     *  polling stays at its fast interval while it is open — and restarts at
+     *  once rather than waiting out a backed-off delay. */
+    fun setQueueOpen(open: Boolean) {
+        queueOpen = open
+        if (!open) return
+        viewModelScope.launch {
+            refreshMeta()
+            stopPolling()
+            startPolling()
+        }
+    }
+
+    private var queueOpen = false
 
     private fun stopPolling() {
         pollJob?.cancel(); pollJob = null
@@ -574,6 +614,10 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
             onCancel = { vm.cancel(it) },
             onDismiss = { queueSheet = false },
         )
+        DisposableEffect(Unit) {
+            vm.setQueueOpen(true)
+            onDispose { vm.setQueueOpen(false) }
+        }
     }
 
     if (filterSheet) {

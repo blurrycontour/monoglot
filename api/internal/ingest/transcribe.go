@@ -115,6 +115,37 @@ func unregisterTranscription(id int) {
 	inFlightMu.Unlock()
 }
 
+// errCancelled is the worker saying it abandoned the job because we asked it
+// to. Distinct from a failure: nothing is wrong with the episode.
+var errCancelled = errors.New("cancelled by request")
+
+// CancelWorker asks the worker to stop transcribing a path. The worker checks
+// between segments, so it gives up the CPU within a second or two instead of
+// running the full episode out and having its result discarded.
+//
+// Best-effort by design: an unreachable or older worker simply means falling
+// back to abandoning the HTTP call, which is what used to happen every time.
+func CancelWorker(ctx context.Context, workerURL, audioPath string) error {
+	body, _ := json.Marshal(map[string]string{"audio_path": audioPath})
+	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost,
+		strings.TrimRight(workerURL, "/")+"/cancel", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("worker cancel: status %d", res.StatusCode)
+	}
+	return nil
+}
+
 // AbortTranscription stops waiting on the worker call for an item, if one is
 // in flight. Reports whether there was one.
 func AbortTranscription(id int) bool {
@@ -159,14 +190,18 @@ func transcribeItem(ctx context.Context, pool *sql.DB, workerURL, rawDir string,
 	// parked on a request whose result was going to be thrown away, and every
 	// other queued episode waited behind it.
 	callCtx, abort := context.WithCancel(ctx)
+	// Deferred, not called here: calling it before the check below would make
+	// callCtx.Err() non-nil for every outcome, so a worker failure would read
+	// as a cancellation and never be marked failed or retried.
+	defer abort()
 	registerTranscription(id, abort)
 	resp, err := callWorker(callCtx, workerURL, audioPath, asr)
 	unregisterTranscription(id)
-	abort()
 	if err != nil {
-		// Aborted here, not upstream: the user cancelled the item. Not a
-		// failure, and specifically not something to retry.
-		if callCtx.Err() != nil && ctx.Err() == nil {
+		// The worker gave the job up because we asked, or we stopped waiting
+		// for it. Either way the user cancelled: not a failure, and
+		// specifically not something to retry.
+		if errors.Is(err, errCancelled) || (callCtx.Err() != nil && ctx.Err() == nil) {
 			return errSkip
 		}
 		return err
@@ -225,6 +260,9 @@ func callWorker(ctx context.Context, workerURL, audioPath, language string) (*Tr
 		return nil, fmt.Errorf("worker: %w", err)
 	}
 	defer res.Body.Close()
+	if res.StatusCode == http.StatusConflict {
+		return nil, errCancelled
+	}
 	if res.StatusCode != http.StatusOK {
 		var buf bytes.Buffer
 		buf.ReadFrom(res.Body)

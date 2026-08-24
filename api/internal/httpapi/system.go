@@ -255,6 +255,23 @@ func (s *Server) cancelItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ask the worker to stop before the audio is deleted: it checks between
+	// segments, so it abandons the job within a second or two instead of
+	// running the whole episode out to produce a result nobody wants.
+	var stopped bool
+	if status == "transcribing" {
+		var path string
+		s.pool.QueryRowContext(r.Context(),
+			`SELECT COALESCE(audio_path,'') FROM items WHERE id=?`, id).Scan(&path)
+		if path != "" {
+			if err := ingest.CancelWorker(r.Context(), s.cfg.WorkerURL, path); err != nil {
+				log.Printf("cancel item %d: worker cancel failed: %v", id, err)
+			} else {
+				stopped = true
+			}
+		}
+	}
+
 	if err := s.archive(r, id); err != nil {
 		serverError(w, err)
 		return
@@ -271,7 +288,8 @@ func (s *Server) cancelItem(w http.ResponseWriter, r *http.Request) {
 	// And start a run, since cancelling is usually how room is made for
 	// something else. A run already in flight records this and repeats.
 	s.runner.Trigger("cancel")
-	log.Printf("cancel item %d (was %s, worker call aborted=%t)", id, status, aborted)
+	log.Printf("cancel item %d (was %s, worker stopped=%t, call aborted=%t)",
+		id, status, stopped, aborted)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "cancelled": status})
 }
 
