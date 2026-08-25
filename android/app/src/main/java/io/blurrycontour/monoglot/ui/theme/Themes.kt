@@ -128,8 +128,13 @@ private val Norrsken = AppTheme(
         onSurface = Color(0xFFE6EDF0),
         surfaceVariant = Color(0xFF1B252B),
         onSurfaceVariant = Color(0xFF95A6AF),
-        outline = Color(0xFF2C3A42),
-        outlineVariant = Color(0xFF222E35),
+        // Brighter than the other dark themes on purpose. The aurora ornament
+        // puts a star field and two colour washes behind every card, and a
+        // hairline pitched at the same contrast as Bläck's — which sits on a
+        // plain background — disappears into that texture. Measured against
+        // the surface it sits on: 2.1, where it was 1.5.
+        outline = Color(0xFF3D515C),
+        outlineVariant = Color(0xFF2C3A42),
     ),
 )
 
@@ -180,8 +185,11 @@ private val Skog = AppTheme(
         onSurface = Color(0xFFE4EDE2),
         surfaceVariant = Color(0xFF1D281E),
         onSurfaceVariant = Color(0xFF95A694),
-        outline = Color(0xFF2E3D2F),
-        outlineVariant = Color(0xFF243024),
+        // Raised for the same reason as Norrsken: scattered leaves behind the
+        // cards are texture for a hairline to get lost in. 2.1 against the
+        // surface, from 1.5.
+        outline = Color(0xFF3E523F),
+        outlineVariant = Color(0xFF2E3D2F),
     ),
 )
 

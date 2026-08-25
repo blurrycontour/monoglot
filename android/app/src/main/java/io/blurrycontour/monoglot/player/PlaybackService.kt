@@ -7,8 +7,12 @@ import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.CommandButton
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.google.common.collect.ImmutableList
+import io.blurrycontour.monoglot.R
 import io.blurrycontour.monoglot.MainActivity
 
 /**
@@ -75,6 +79,17 @@ class PlaybackService : MediaSessionService() {
             // Five seconds, to match the in-app transport.
             .setSeekBackIncrementMs(5_000)
             .setSeekForwardIncrementMs(5_000)
+            // Holds a wifi lock as well as a wake lock while playing.
+            //
+            // Audio already buffered keeps playing with the screen off, so
+            // playback looked fine — but a seek past the buffer opens a new
+            // ranged request, and by then the radio may have dropped the wifi
+            // association it no longer appeared to need. Against a homelab
+            // server on the LAN that request cannot be served over mobile
+            // data at all: it hung until it timed out, the load failed, and
+            // the session went down with it. WAKE_LOCK is already declared in
+            // the manifest for exactly this and was never used.
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
 
         player.addListener(recovery)
@@ -87,7 +102,35 @@ class PlaybackService : MediaSessionService() {
 
         mediaSession = MediaSession.Builder(this, player)
             .setSessionActivity(sessionActivity)
+            // The default layout is previous / play-pause / next, and on a
+            // single-item playlist the outer two collapse to one button that
+            // restarts the episode — which is all the notification offered.
+            // Skipping five seconds is what this app actually does, so those
+            // are the buttons it gets, matching the in-app transport.
+            .setCustomLayout(
+                ImmutableList.of(
+                    CommandButton.Builder()
+                        .setPlayerCommand(Player.COMMAND_SEEK_BACK)
+                        .setIconResId(R.drawable.ic_notif_rewind)
+                        .setDisplayName("Back 5 seconds")
+                        .build(),
+                    CommandButton.Builder()
+                        .setPlayerCommand(Player.COMMAND_SEEK_FORWARD)
+                        .setIconResId(R.drawable.ic_notif_forward)
+                        .setDisplayName("Forward 5 seconds")
+                        .build(),
+                )
+            )
             .build()
+
+        // The status-bar glyph was Media3's generic play icon, so a Monoglot
+        // notification looked like it came from nothing in particular. The
+        // app's own mark already existed for the reminder notifications.
+        setMediaNotificationProvider(
+            DefaultMediaNotificationProvider.Builder(this).build().apply {
+                setSmallIcon(R.drawable.ic_stat_monoglot)
+            }
+        )
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
