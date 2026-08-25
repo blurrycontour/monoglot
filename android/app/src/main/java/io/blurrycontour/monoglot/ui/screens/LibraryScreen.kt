@@ -464,8 +464,22 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun refreshMetaPublic() = refreshMeta()
 
+    /**
+     * Marks an episode unheard.
+     *
+     * If it is the one loaded in the player, that has to be reset too. This
+     * screen only ever cleared the stored position, so clearing an episode the
+     * mini player was holding left it sitting there at the position just
+     * erased — and playing on from it wrote the whole thing straight back.
+     * The maximised player had always done this; the list had not.
+     */
     fun clearProgress(item: ItemSummary) {
         viewModelScope.launch {
+            if (PlaybackHolder.now.value.itemId == item.id) {
+                PlaybackHolder.pause()
+                PlaybackHolder.seekTo(0)
+                PlaybackHolder.forgetSavedPosition()
+            }
             runCatching { repo.api.resetProgress(item.id) }
             runCatching { repo.clearLocalProgress(item.id) }
             refresh()

@@ -17,10 +17,17 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -61,15 +68,13 @@ fun ListeningSection(days: List<DayTotal>, modifier: Modifier = Modifier) {
     // forward arrow is disabled there rather than hidden, so the control does
     // not move under the thumb as you step around.
     var back by remember { mutableIntStateOf(0) }
-    // Tapping a bar or a day names it, rather than printing a number on every
-    // mark and turning the chart into a table.
-    var picked by remember { mutableStateOf<LocalDate?>(null) }
+    var tip by remember { mutableStateOf<Tip?>(null) }
 
     Column(modifier) {
         PrimaryTabRow(selectedTabIndex = tab, containerColor = Color.Transparent) {
-            Tab(selected = tab == 0, onClick = { tab = 0; back = 0; picked = null },
+            Tab(selected = tab == 0, onClick = { tab = 0; back = 0; tip = null },
                 text = { Text("Week") })
-            Tab(selected = tab == 1, onClick = { tab = 1; back = 0; picked = null },
+            Tab(selected = tab == 1, onClick = { tab = 1; back = 0; tip = null },
                 text = { Text("Month") })
         }
         Spacer(Modifier.height(14.dp))
@@ -81,32 +86,62 @@ fun ListeningSection(days: List<DayTotal>, modifier: Modifier = Modifier) {
         val total = range.sumOf { byDay[it] ?: 0L }
 
         Header(
-            picked = picked,
-            pickedMs = picked?.let { byDay[it] ?: 0L },
             total = total,
             label = if (tab == 0) weekLabel(range, back) else monthLabel(month, today),
             canGoForward = back > 0,
-            onBack = { back++; picked = null },
-            onForward = { if (back > 0) back--; picked = null },
+            onBack = { back++; tip = null },
+            onForward = { if (back > 0) back--; tip = null },
         )
         Spacer(Modifier.height(12.dp))
 
-        if (tab == 0) {
-            WeekBars(days = range, byDay = byDay, picked = picked,
-                onPick = { picked = if (picked == it) null else it })
-        } else {
-            MonthGrid(month = month, byDay = byDay, today = today,
-                picked = picked, onPick = { picked = if (picked == it) null else it })
+        // The charts and their tooltip share one coordinate space, so a mark
+        // can say where it is and the bubble can be placed over it.
+        var boxCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+        var boxWidth by remember { mutableIntStateOf(0) }
+
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .onSizeChanged { boxWidth = it.width }
+                .onGloballyPositioned { boxCoords = it }
+        ) {
+            val onPick: (LocalDate, Long, LayoutCoordinates) -> Unit = { day, ms, coords ->
+                val parent = boxCoords
+                tip = if (tip?.date == day || parent == null) {
+                    null
+                } else {
+                    val origin = parent.localPositionOf(coords, Offset.Zero)
+                    Tip(
+                        date = day,
+                        ms = ms,
+                        centreX = origin.x + coords.size.width / 2f,
+                        topY = origin.y,
+                    )
+                }
+            }
+
+            if (tab == 0) {
+                WeekBars(days = range, byDay = byDay, picked = tip?.date, onPick = onPick)
+            } else {
+                MonthGrid(month = month, byDay = byDay, today = today,
+                    picked = tip?.date, onPick = onPick)
+            }
+
+            tip?.let { TipBubble(it, boxWidth.toFloat()) }
         }
     }
 }
 
-/** The one number worth reading without touching anything, and the two
- *  controls for moving between periods. */
+/**
+ * The period's total and the controls for moving between periods.
+ *
+ * The total stays put when a day is tapped. It used to be replaced by whatever
+ * you touched, so the one figure you were tracking vanished the moment you
+ * asked about a day within it — and there was no way back to it but to tap the
+ * same mark again.
+ */
 @Composable
 private fun Header(
-    picked: LocalDate?,
-    pickedMs: Long?,
     total: Long,
     label: String,
     canGoForward: Boolean,
@@ -116,13 +151,14 @@ private fun Header(
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(
-                formatListened(if (picked != null) pickedMs ?: 0L else total),
+                formatListened(total),
                 fontSize = 26.sp,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                picked?.format(DateTimeFormatter.ofPattern("EEEE d MMM")) ?: label,
+                label,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -141,6 +177,59 @@ private fun Header(
     }
 }
 
+/** A tapped mark: what it says, and where on the chart it sits. */
+private data class Tip(
+    val date: LocalDate,
+    val ms: Long,
+    val centreX: Float,
+    val topY: Float,
+)
+
+/**
+ * The readout for one mark, floated above it.
+ *
+ * Seconds included: on a chart whose bars are scaled to each other, this is the
+ * only place an exact figure appears, and rounding a first short session to
+ * "under a minute" twice over would be no answer at all.
+ */
+@Composable
+private fun TipBubble(tip: Tip, boxWidthPx: Float) {
+    var width by remember(tip) { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+
+    Surface(
+        color = MaterialTheme.colorScheme.inverseSurface,
+        shape = RoundedCornerShape(8.dp),
+        shadowElevation = 4.dp,
+        modifier = Modifier
+            .onSizeChanged { width = it.width }
+            .offset {
+                // Centred on the mark, then held inside the card: a bubble
+                // clipped by the edge is worse than one slightly off-centre.
+                val half = width / 2f
+                val margin = with(density) { 4.dp.toPx() }
+                val x = (tip.centreX - half)
+                    .coerceIn(margin, (boxWidthPx - width - margin).coerceAtLeast(margin))
+                val y = tip.topY - with(density) { 40.dp.toPx() }
+                IntOffset(x.toInt(), y.coerceAtLeast(0f).toInt())
+            },
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+            Text(
+                tip.date.format(DateTimeFormatter.ofPattern("EEE d MMM")),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.75f),
+            )
+            Text(
+                formatExact(tip.ms),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.inverseOnSurface,
+            )
+        }
+    }
+}
+
 private const val BAR_AREA_DP = 108
 
 @Composable
@@ -148,7 +237,7 @@ private fun WeekBars(
     days: List<LocalDate>,
     byDay: Map<LocalDate, Long>,
     picked: LocalDate?,
-    onPick: (LocalDate) -> Unit,
+    onPick: (LocalDate, Long, LayoutCoordinates) -> Unit,
 ) {
     // Scaled to the busiest day in view, with a floor so a single quiet day
     // does not render as one enormous bar and a week of zeroes.
@@ -165,8 +254,12 @@ private fun WeekBars(
                 (ms.toFloat() / peak).coerceIn(0f, 1f), tween(420), label = "bar")
             val selected = day == picked
 
+            var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
             Column(
-                Modifier.weight(1f).clickable { onPick(day) },
+                Modifier
+                    .weight(1f)
+                    .onGloballyPositioned { coords = it }
+                    .clickable { coords?.let { onPick(day, ms, it) } },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Bottom,
             ) {
@@ -230,7 +323,7 @@ private fun MonthGrid(
     byDay: Map<LocalDate, Long>,
     today: LocalDate,
     picked: LocalDate?,
-    onPick: (LocalDate) -> Unit,
+    onPick: (LocalDate, Long, LayoutCoordinates) -> Unit,
 ) {
     val first = month.atDay(1)
     val peak = maxOf(
@@ -255,9 +348,17 @@ private fun MonthGrid(
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 week.forEach { day ->
                     Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        if (day != null) DayCircle(day, byDay[day] ?: 0L, peak,
-                            isToday = day == today, selected = day == picked,
-                            onClick = { onPick(day) })
+                        if (day != null) {
+                            val ms = byDay[day] ?: 0L
+                            var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+                            DayCircle(
+                                day, ms, peak,
+                                isToday = day == today,
+                                selected = day == picked,
+                                modifier = Modifier.onGloballyPositioned { coords = it },
+                                onClick = { coords?.let { c -> onPick(day, ms, c) } },
+                            )
+                        }
                     }
                 }
                 // A short final week must not stretch its days across the row.
@@ -278,6 +379,7 @@ private fun DayCircle(
     peakMs: Long,
     isToday: Boolean,
     selected: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val share = (ms.toFloat() / peakMs).coerceIn(0f, 1f)
@@ -286,7 +388,7 @@ private fun DayCircle(
     val alpha = if (ms <= 0L) 0f else 0.22f + 0.78f * share
 
     Box(
-        Modifier
+        modifier
             .aspectRatio(1f)
             .padding(1.dp)
             .clip(CircleShape)
@@ -325,10 +427,24 @@ fun formatListened(ms: Long): String {
     val minutes = ms / 60_000
     return when {
         ms <= 0L -> "—"
-        minutes < 1 -> "under a minute"
+        minutes < 1 -> "<1 min"
         minutes < 60 -> "$minutes min"
         minutes % 60 == 0L -> "${minutes / 60}h"
         else -> "${minutes / 60}h ${minutes % 60}m"
+    }
+}
+
+/** Down to the second, for the one mark being asked about. */
+private fun formatExact(ms: Long): String {
+    val total = ms / 1000
+    val h = total / 3600
+    val m = (total % 3600) / 60
+    val sec = total % 60
+    return when {
+        total <= 0L -> "nothing"
+        h > 0 -> "${h}h ${m}m ${sec}s"
+        m > 0 -> "${m}m ${sec}s"
+        else -> "${sec}s"
     }
 }
 
