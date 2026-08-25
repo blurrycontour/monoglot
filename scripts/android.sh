@@ -103,7 +103,7 @@ fi
 # which is precisely when you most want to install the result.
 VERSION_CODE=$(( ($(date -u +%s) - 1704067200) / 60 ))
 GIT_DESC="$(git -C "$ROOT" describe --always --dirty 2>/dev/null || echo nogit)"
-VERSION_NAME="1.0-$(date -u +%Y%m%d.%H%M)-$GIT_DESC"
+VERSION_NAME="$(date -u +%Y%m%d.%H%M)-$GIT_DESC"
 
 TASK="${1:-assembleRelease}"
 shift || true
