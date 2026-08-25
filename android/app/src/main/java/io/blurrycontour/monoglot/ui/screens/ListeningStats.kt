@@ -2,6 +2,8 @@ package io.blurrycontour.monoglot.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,7 +29,9 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -98,6 +102,7 @@ fun ListeningSection(days: List<DayTotal>, modifier: Modifier = Modifier) {
         // can say where it is and the bubble can be placed over it.
         var boxCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
         var boxWidth by remember { mutableIntStateOf(0) }
+        var tipSize by remember { mutableStateOf(IntSize.Zero) }
 
         Box(
             Modifier
@@ -127,7 +132,42 @@ fun ListeningSection(days: List<DayTotal>, modifier: Modifier = Modifier) {
                     picked = tip?.date, onPick = onPick)
             }
 
-            tip?.let { TipBubble(it, boxWidth.toFloat()) }
+            tip?.let { t ->
+                val density = LocalDensity.current
+                val gap = with(density) { 8.dp.toPx() }
+                val margin = with(density) { 4.dp.toPx() }
+                // Sits above the mark, and is held inside the card when it
+                // would otherwise be clipped by an edge.
+                val tipX = (t.centreX - tipSize.width / 2f)
+                    .coerceIn(margin, (boxWidth - tipSize.width - margin).coerceAtLeast(margin))
+                val tipY = (t.topY - tipSize.height - gap).coerceAtLeast(0f)
+
+                // A leader, because a bubble held away from an edge no longer
+                // sits over the thing it describes — and on a calendar of
+                // thirty-one circles, "the one below it" is not obvious.
+                val leader = MaterialTheme.colorScheme.primary
+                Canvas(Modifier.fillMaxSize()) {
+                    drawLine(
+                        color = leader,
+                        start = Offset(t.centreX, tipY + tipSize.height),
+                        end = Offset(t.centreX, t.topY),
+                        strokeWidth = with(density) { 1.5.dp.toPx() },
+                        pathEffect = PathEffect.dashPathEffect(
+                            floatArrayOf(
+                                with(density) { 3.dp.toPx() },
+                                with(density) { 3.dp.toPx() },
+                            )
+                        ),
+                    )
+                }
+
+                TipBubble(
+                    tip = t,
+                    x = tipX,
+                    y = tipY,
+                    onSize = { tipSize = it },
+                )
+            }
         }
     }
 }
@@ -152,7 +192,7 @@ private fun Header(
         Column(Modifier.weight(1f)) {
             Text(
                 formatListened(total),
-                fontSize = 26.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -193,42 +233,46 @@ private data class Tip(
  * "under a minute" twice over would be no answer at all.
  */
 @Composable
-private fun TipBubble(tip: Tip, boxWidthPx: Float) {
-    var width by remember(tip) { mutableIntStateOf(0) }
-    val density = LocalDensity.current
-
+private fun TipBubble(
+    tip: Tip,
+    x: Float,
+    y: Float,
+    onSize: (IntSize) -> Unit,
+) {
     Surface(
-        color = MaterialTheme.colorScheme.inverseSurface,
+        // The theme's own accent container. inverseSurface was neither: on a
+        // dark theme it is a white card with black text, which belongs to no
+        // theme in this app and reads as a piece of another product.
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
         shape = RoundedCornerShape(8.dp),
-        shadowElevation = 4.dp,
+        shadowElevation = 3.dp,
         modifier = Modifier
-            .onSizeChanged { width = it.width }
-            .offset {
-                // Centred on the mark, then held inside the card: a bubble
-                // clipped by the edge is worse than one slightly off-centre.
-                val half = width / 2f
-                val margin = with(density) { 4.dp.toPx() }
-                val x = (tip.centreX - half)
-                    .coerceIn(margin, (boxWidthPx - width - margin).coerceAtLeast(margin))
-                val y = tip.topY - with(density) { 40.dp.toPx() }
-                IntOffset(x.toInt(), y.coerceAtLeast(0f).toInt())
-            },
+            .onSizeChanged(onSize)
+            .offset { IntOffset(x.toInt(), y.toInt()) },
     ) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
             Text(
                 tip.date.format(DateTimeFormatter.ofPattern("EEE d MMM")),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.75f),
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
             )
             Text(
                 formatExact(tip.ms),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.inverseOnSurface,
             )
         }
     }
 }
+
+/** Room above the marks for a tooltip to sit in.
+ *
+ *  Reserved rather than fought over: a bubble placed above the tallest bar
+ *  would otherwise be pushed back down on top of it, which is where it says
+ *  least. */
+private val TIP_HEADROOM = 46.dp
 
 private const val BAR_AREA_DP = 108
 
@@ -243,6 +287,8 @@ private fun WeekBars(
     // does not render as one enormous bar and a week of zeroes.
     val peak = maxOf(days.maxOfOrNull { byDay[it] ?: 0L } ?: 0L, 1L)
 
+    Column {
+    Spacer(Modifier.height(TIP_HEADROOM))
     Row(
         Modifier.fillMaxWidth().height(BAR_AREA_DP.dp + 38.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -254,12 +300,14 @@ private fun WeekBars(
                 (ms.toFloat() / peak).coerceIn(0f, 1f), tween(420), label = "bar")
             val selected = day == picked
 
-            var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+            // The mark's own coordinates, not the column's: the column spans
+            // the whole plot area, so a leader drawn to its top would start at
+            // the ceiling regardless of how tall the bar actually is.
+            var mark by remember { mutableStateOf<LayoutCoordinates?>(null) }
             Column(
                 Modifier
                     .weight(1f)
-                    .onGloballyPositioned { coords = it }
-                    .clickable { coords?.let { onPick(day, ms, it) } },
+                    .clickable { mark?.let { onPick(day, ms, it) } },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Bottom,
             ) {
@@ -275,6 +323,7 @@ private fun WeekBars(
                             .height(3.dp)
                             .clip(RoundedCornerShape(2.dp))
                             .background(MaterialTheme.colorScheme.outlineVariant)
+                            .onGloballyPositioned { if (ms <= 0L) mark = it }
                     )
                     if (ms > 0) {
                         Box(
@@ -284,6 +333,7 @@ private fun WeekBars(
                                 // Rounded at the data end only; the baseline
                                 // end stays square and anchored.
                                 .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                                .onGloballyPositioned { mark = it }
                                 .background(
                                     if (selected) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.primary.copy(alpha = 0.78f)
@@ -315,6 +365,7 @@ private fun WeekBars(
             }
         }
     }
+    }
 }
 
 @Composable
@@ -333,6 +384,7 @@ private fun MonthGrid(
     val cells = List(lead) { null } + (1..month.lengthOfMonth()).map { month.atDay(it) }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Spacer(Modifier.height(TIP_HEADROOM - 6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             DayOfWeek.entries.forEach { dow ->
                 Text(
