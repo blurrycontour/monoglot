@@ -120,6 +120,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                             resumeMs = maxOf(repo.localProgress(itemId), bundle.item.positionMs),
                             speed = speed,
                             publishedAt = bundle.item.publishedAt,
+                            segmentStartsMs = bundle.segments
+                                .map { it.startMs }.toIntArray(),
                         )
                         PlaybackHolder.observePosition { pos -> updatePosition(pos) }
                     }

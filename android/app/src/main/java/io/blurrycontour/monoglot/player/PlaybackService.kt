@@ -135,6 +135,11 @@ class PlaybackService : MediaSessionService() {
      */
     private fun customLayout(): ImmutableList<CommandButton> = ImmutableList.of(
         CommandButton.Builder()
+            .setSessionCommand(SessionCommand(CMD_PREV_SENTENCE, Bundle.EMPTY))
+            .setIconResId(R.drawable.ic_notif_prev_sentence)
+            .setDisplayName("Previous sentence")
+            .build(),
+        CommandButton.Builder()
             .setSessionCommand(SessionCommand(CMD_BACK, Bundle.EMPTY))
             .setIconResId(R.drawable.ic_notif_rewind)
             .setDisplayName("Back 5 seconds")
@@ -143,6 +148,11 @@ class PlaybackService : MediaSessionService() {
             .setSessionCommand(SessionCommand(CMD_FORWARD, Bundle.EMPTY))
             .setIconResId(R.drawable.ic_notif_forward)
             .setDisplayName("Forward 5 seconds")
+            .build(),
+        CommandButton.Builder()
+            .setSessionCommand(SessionCommand(CMD_NEXT_SENTENCE, Bundle.EMPTY))
+            .setIconResId(R.drawable.ic_notif_next_sentence)
+            .setDisplayName("Next sentence")
             .build(),
     )
 
@@ -157,6 +167,8 @@ class PlaybackService : MediaSessionService() {
                 .buildUpon()
                 .add(SessionCommand(CMD_BACK, Bundle.EMPTY))
                 .add(SessionCommand(CMD_FORWARD, Bundle.EMPTY))
+                .add(SessionCommand(CMD_PREV_SENTENCE, Bundle.EMPTY))
+                .add(SessionCommand(CMD_NEXT_SENTENCE, Bundle.EMPTY))
                 .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(commands)
@@ -173,9 +185,29 @@ class PlaybackService : MediaSessionService() {
             when (customCommand.customAction) {
                 CMD_BACK -> player.seekTo((player.currentPosition - SKIP_MS).coerceAtLeast(0))
                 CMD_FORWARD -> player.seekTo(player.currentPosition + SKIP_MS)
+                CMD_PREV_SENTENCE -> seekSentence(player, back = true)
+                CMD_NEXT_SENTENCE -> seekSentence(player, back = false)
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
+    }
+
+    /**
+     * Sentence skip, from the boundaries the app put on the media item.
+     *
+     * An episode with no transcript — or one prepared before this existed —
+     * carries no boundaries, and the button does nothing rather than guessing
+     * at a jump.
+     */
+    private fun seekSentence(player: Player, back: Boolean) {
+        val starts = player.currentMediaItem
+            ?.mediaMetadata?.extras
+            ?.getIntArray(PlaybackHolder.EXTRA_SEGMENT_STARTS)
+            ?: return
+        val position = player.currentPosition.toInt()
+        val target = if (back) SegmentNav.previous(starts, position)
+                     else SegmentNav.next(starts, position)
+        if (target != SegmentNav.NONE) player.seekTo(target.toLong())
     }
 
     private companion object {
@@ -187,6 +219,8 @@ class PlaybackService : MediaSessionService() {
 
         const val CMD_BACK = "io.blurrycontour.monoglot.BACK_5"
         const val CMD_FORWARD = "io.blurrycontour.monoglot.FORWARD_5"
+        const val CMD_PREV_SENTENCE = "io.blurrycontour.monoglot.PREV_SENTENCE"
+        const val CMD_NEXT_SENTENCE = "io.blurrycontour.monoglot.NEXT_SENTENCE"
     }
 
     override fun onDestroy() {

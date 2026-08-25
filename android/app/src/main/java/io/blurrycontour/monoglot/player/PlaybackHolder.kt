@@ -2,6 +2,7 @@ package io.blurrycontour.monoglot.player
 
 import android.content.ComponentName
 import android.content.Context
+import android.os.Bundle
 import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -241,6 +242,9 @@ object PlaybackHolder {
 
     private var appContext: Context? = null
 
+    /** Key for the sentence boundaries carried in the item's metadata. */
+    const val EXTRA_SEGMENT_STARTS = "io.blurrycontour.monoglot.SEGMENT_STARTS"
+
     /** What the notification and lock screen call this episode. */
     private fun notificationTitle(title: String, publishedAt: String?): String {
         val date = Dates.label(Dates.parse(publishedAt))
@@ -260,6 +264,7 @@ object PlaybackHolder {
         resumeMs: Int,
         speed: Float,
         publishedAt: String? = null,
+        segmentStartsMs: IntArray = IntArray(0),
     ) {
         val c = controller ?: return
         val switching = c.currentMediaItem?.mediaId != itemId.toString()
@@ -271,6 +276,13 @@ object PlaybackHolder {
                 .setUri(uri)
                 .setMediaMetadata(
                     MediaMetadata.Builder()
+                        // Sentence boundaries ride along with the item, so the
+                        // service can offer sentence skip without holding a
+                        // transcript, and cannot end up navigating one episode
+                        // by another's boundaries.
+                        .setExtras(Bundle().apply {
+                            putIntArray(EXTRA_SEGMENT_STARTS, segmentStartsMs)
+                        })
                         // The date, not the headline: every Klartext episode
                         // shares one title, and the notification is where you
                         // are least able to work out which one is playing.
@@ -406,6 +418,7 @@ object PlaybackHolder {
                         resumeMs = maxOf(repo.localProgress(itemId), bundle.item.positionMs),
                         speed = repo.settings.speedFlow.first(),
                         publishedAt = bundle.item.publishedAt,
+                        segmentStartsMs = bundle.segments.map { it.startMs }.toIntArray(),
                     )
                 }
             }
