@@ -134,7 +134,7 @@ fun ListeningSection(days: List<DayTotal>, modifier: Modifier = Modifier) {
 
             tip?.let { t ->
                 val density = LocalDensity.current
-                val gap = with(density) { 8.dp.toPx() }
+                val gap = with(density) { TIP_GAP.toPx() }
                 val margin = with(density) { 4.dp.toPx() }
                 // Sits above the mark, and is held inside the card when it
                 // would otherwise be clipped by an edge.
@@ -267,14 +267,23 @@ private fun TipBubble(
     }
 }
 
-/** Room above the marks for a tooltip to sit in.
+/**
+ * Room above the marks for a tooltip to sit in.
  *
- *  Reserved rather than fought over: a bubble placed above the tallest bar
- *  would otherwise be pushed back down on top of it, which is where it says
- *  least. */
-private val TIP_HEADROOM = 46.dp
+ * Reserved rather than fought over: a bubble placed above the tallest bar would
+ * otherwise be pushed back down on top of it, which is where it says least.
+ *
+ * Enough for the whole bubble — two lines and its padding — plus the gap and
+ * the leader beneath it. At 46dp it was enough for neither: the bubble was
+ * clamped to the ceiling and came to rest flush on the bar it described, with
+ * the leader squeezed out of existence between them.
+ */
+private val TIP_HEADROOM = 76.dp
 
-private const val BAR_AREA_DP = 108
+/** Clear air between the bubble and the mark, for the leader to cross. */
+private val TIP_GAP = 12.dp
+
+private const val BAR_AREA_DP = 96
 
 @Composable
 private fun WeekBars(
