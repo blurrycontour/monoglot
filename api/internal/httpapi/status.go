@@ -169,18 +169,19 @@ func (s *Server) pipelineItems(r *http.Request, source string) ([]PipelineItem, 
 // attachDownloadProgress fills in the item being fetched right now. No request
 // to make: the download runs in this process, so it is a read of a mutex.
 func attachDownloadProgress(items []PipelineItem) {
-	state, ok := ingest.DownloadProgress()
-	if !ok {
+	state := ingest.DownloadProgress()
+	if len(state) == 0 {
 		return
 	}
 	for i := range items {
-		if items[i].ID == state.ItemID {
-			items[i].Progress = state.Fraction
-			items[i].ElapsedSeconds = state.Elapsed
-			items[i].BytesDone = state.Written
-			items[i].BytesTotal = state.Total
-			return
+		st, ok := state[items[i].ID]
+		if !ok {
+			continue
 		}
+		items[i].Progress = st.Fraction
+		items[i].ElapsedSeconds = st.Elapsed
+		items[i].BytesDone = st.Written
+		items[i].BytesTotal = st.Total
 	}
 }
 

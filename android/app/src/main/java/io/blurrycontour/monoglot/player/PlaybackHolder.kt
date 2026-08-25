@@ -229,6 +229,12 @@ object PlaybackHolder {
     fun stop() {
         controller?.run { pause(); clearMediaItems() }
         _now.value = NowPlaying()
+        // And forget which episode it was, or restoreLastIfIdle brings the bar
+        // straight back on the next cold start — closing it has to mean closed.
+        // The listening position is kept: it lives per item, not here.
+        scope.launch {
+            runCatching { io.blurrycontour.monoglot.data.Graph.repository.settings.setLastItem(0) }
+        }
     }
 
     fun position(): Int = controller?.currentPosition?.toInt() ?: 0

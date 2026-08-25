@@ -6,12 +6,11 @@ import (
 	"time"
 )
 
-// Progress of the download running right now.
+// Progress of the downloads running right now.
 //
-// One slot, not a map: DownloadPending works through its queue serially, for
-// the same reason the worker transcribes one file at a time — these are the
-// two stages that saturate a resource, and running them in parallel would only
-// make each slower.
+// Keyed by item, because several run at once: downloading is I/O, and a few
+// in parallel finish sooner than the same few one after another. Transcription
+// stays serial — that one really does saturate a resource.
 //
 // The transcription stage reports its own progress from the worker. This is
 // the other half: a 19-minute episode is ~19MB, and on a slow connection the
@@ -25,62 +24,73 @@ type DownloadState struct {
 	Elapsed  float64 `json:"elapsed_seconds"`
 }
 
+type downloadSlot struct {
+	written int64
+	total   int64
+	started time.Time
+}
+
 var (
-	dlMu      sync.RWMutex
-	dlItem    int
-	dlWritten int64
-	dlTotal   int64
-	dlStarted time.Time
+	dlMu sync.RWMutex
+	dl   = map[int]*downloadSlot{}
 )
 
-// DownloadProgress returns the state of the current download, or false when
-// nothing is being fetched.
-func DownloadProgress() (DownloadState, bool) {
+// DownloadProgress returns the state of every download in flight, keyed by
+// item id. Empty when nothing is being fetched.
+func DownloadProgress() map[int]DownloadState {
 	dlMu.RLock()
 	defer dlMu.RUnlock()
-	if dlItem == 0 {
-		return DownloadState{}, false
+	if len(dl) == 0 {
+		return nil
 	}
-	s := DownloadState{
-		ItemID:  dlItem,
-		Written: dlWritten,
-		Total:   dlTotal,
-		Elapsed: time.Since(dlStarted).Seconds(),
-	}
-	// Content-Length is advisory: a server that omits it leaves the fraction
-	// at zero, and the app shows an indeterminate bar rather than a wrong one.
-	if dlTotal > 0 {
-		s.Fraction = float64(dlWritten) / float64(dlTotal)
-		if s.Fraction > 1 {
-			s.Fraction = 1
+	out := make(map[int]DownloadState, len(dl))
+	for id, s := range dl {
+		st := DownloadState{
+			ItemID:  id,
+			Written: s.written,
+			Total:   s.total,
+			Elapsed: time.Since(s.started).Seconds(),
 		}
+		// Content-Length is advisory: a server that omits it leaves the
+		// fraction at zero, and the app shows an indeterminate bar rather
+		// than a wrong one.
+		if s.total > 0 {
+			st.Fraction = float64(s.written) / float64(s.total)
+			if st.Fraction > 1 {
+				st.Fraction = 1
+			}
+		}
+		out[id] = st
 	}
-	return s, true
+	return out
 }
 
 func startDownload(itemID int, total int64) {
 	dlMu.Lock()
-	dlItem, dlWritten, dlTotal, dlStarted = itemID, 0, total, time.Now()
+	dl[itemID] = &downloadSlot{total: total, started: time.Now()}
 	dlMu.Unlock()
 }
 
-func endDownload() {
+func endDownload(itemID int) {
 	dlMu.Lock()
-	dlItem, dlWritten, dlTotal = 0, 0, 0
+	delete(dl, itemID)
 	dlMu.Unlock()
 }
 
 // countingWriter records bytes as they are written, so progress costs one
-// atomic-ish update per copy buffer rather than a stat of the partial file.
+// locked increment per copy buffer rather than a stat of the partial file.
 type countingWriter struct {
-	w io.Writer
+	w  io.Writer
+	id int
 }
 
 func (c countingWriter) Write(p []byte) (int, error) {
 	n, err := c.w.Write(p)
 	if n > 0 {
 		dlMu.Lock()
-		dlWritten += int64(n)
+		if s := dl[c.id]; s != nil {
+			s.written += int64(n)
+		}
 		dlMu.Unlock()
 	}
 	return n, err

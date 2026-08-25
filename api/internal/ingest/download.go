@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"database/sql"
@@ -86,17 +88,41 @@ func DownloadPending(ctx context.Context, pool *sql.DB, audioDir string, limit i
 		return 0, err
 	}
 
+	// A few at a time. Downloading is I/O — three in parallel finish sooner
+	// than three in sequence — but not all of them at once: the point of the
+	// queue view is to show what is happening, and forty simultaneous bars
+	// show nothing. The rest wait their turn and say so.
+	sem := make(chan struct{}, MaxConcurrentDownloads)
+	var wg sync.WaitGroup
 	for _, j := range jobs {
-		if err := downloadItem(ctx, pool, audioDir, j.id, j.url); err != nil {
-			log.Printf("ERROR download item %d: %v", j.id, err)
-			markFailed(ctx, pool, j.id, err)
-		}
 		if ctx.Err() != nil {
 			break
 		}
+		wg.Add(1)
+		go func(id int, url string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				return
+			}
+			if err := downloadItem(ctx, pool, audioDir, id, url); err != nil {
+				if errors.Is(err, errSkip) {
+					return
+				}
+				log.Printf("ERROR download item %d: %v", id, err)
+				markFailed(ctx, pool, id, err)
+			}
+		}(j.id, j.url)
 	}
+	wg.Wait()
 	return len(jobs), nil
 }
+
+// MaxConcurrentDownloads is how many episodes are fetched at once. Three is
+// enough to keep a home connection busy without turning the queue into a wall
+// of progress bars, and it is polite to a public broadcaster's CDN.
+const MaxConcurrentDownloads = 3
 
 func downloadItem(ctx context.Context, pool *sql.DB, audioDir string, id int, url string) error {
 	if _, err := pool.ExecContext(ctx,
@@ -135,9 +161,9 @@ func downloadItem(ctx context.Context, pool *sql.DB, audioDir string, id int, ur
 	// Content-Length is what makes the fraction meaningful; SR and Acast both
 	// send it. Without it the app shows an indeterminate bar.
 	startDownload(id, resp.ContentLength)
-	defer endDownload()
+	defer endDownload(id)
 
-	n, err := io.Copy(countingWriter{f}, resp.Body)
+	n, err := io.Copy(countingWriter{w: f, id: id}, resp.Body)
 	closeErr := f.Close()
 	if err != nil {
 		os.Remove(tmp)
@@ -166,12 +192,22 @@ func downloadItem(ctx context.Context, pool *sql.DB, audioDir string, id int, ur
 	if durMS > 0 {
 		dur = durMS
 	}
-	_, err = pool.ExecContext(ctx, `
+	// Only if the row is still ours. Cancelling deletes the audio and archives
+	// the item, and with several downloads in flight that can land in the
+	// middle of this one — writing 'downloaded' over it would resurrect an
+	// episode the user just removed, which is exactly the bug the transcriber
+	// had.
+	res, err := pool.ExecContext(ctx, `
 		UPDATE items SET status='downloaded', audio_path=?,
 		       duration_ms=COALESCE(?, duration_ms), error=NULL
-		WHERE id=?`, dest, dur, id)
+		WHERE id=? AND status='downloading'`, dest, dur, id)
 	if err != nil {
 		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		os.Remove(dest)
+		log.Printf("download item %d: cancelled while downloading, discarding", id)
+		return errSkip
 	}
 	log.Printf("download item %d: %s (%d bytes)", id, dest, n)
 	return nil

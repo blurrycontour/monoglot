@@ -38,6 +38,10 @@ type fakeWorker struct {
 	ticks     int
 	fail      bool // return 500 instead of a transcript
 	empty     bool // return 200 with no segments
+
+	audioDelay time.Duration // how long each audio body takes to serve
+	dlNow      int           // downloads in flight
+	dlPeak     int           // the most that were ever in flight at once
 }
 
 func newFakeWorker() *fakeWorker {
@@ -54,8 +58,36 @@ func (f *fakeWorker) handler() http.Handler {
 
 	// Audio, for the download stage.
 	mux.HandleFunc("/audio/", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.dlNow++
+		if f.dlNow > f.dlPeak {
+			f.dlPeak = f.dlNow
+		}
+		delay := f.audioDelay
+		f.mu.Unlock()
+		defer func() {
+			f.mu.Lock()
+			f.dlNow--
+			f.mu.Unlock()
+		}()
+
 		w.Header().Set("Content-Length", "8")
-		w.Write([]byte("012345678"[:8]))
+		if delay > 0 {
+			// Half the body, a pause, then the rest: enough for the run to
+			// observe a download that is genuinely in flight.
+			w.Write([]byte("0123"))
+			if fl, ok := w.(http.Flusher); ok {
+				fl.Flush()
+			}
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(delay):
+			}
+			w.Write([]byte("4567"))
+			return
+		}
+		w.Write([]byte("01234567"))
 	})
 
 	mux.HandleFunc("/cancel", func(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +160,12 @@ func (f *fakeWorker) startCount(path string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.started[path]
+}
+
+func (f *fakeWorker) peakDownloads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.dlPeak
 }
 
 // rig is a whole instance: schema, config, runner, HTTP surface and a worker.
@@ -616,5 +654,99 @@ func TestRunDrainsTheWholeQueue(t *testing.T) {
 		if got := r.status(id); got != "ready" {
 			t.Errorf("item %d = %q, want ready", id, got)
 		}
+	}
+}
+
+// Downloads run a few at a time, so the queue shows a handful of moving bars
+// rather than one — and not all of them at once, which would show nothing.
+func TestDownloadsRunAFewAtATime(t *testing.T) {
+	r := newRig(t)
+	r.worker.mu.Lock()
+	r.worker.audioDelay = 300 * time.Millisecond
+	r.worker.ticks = 1
+	r.worker.mu.Unlock()
+
+	for i := 0; i < 8; i++ {
+		r.addItem("new")
+	}
+	runInBackground(r)
+
+	// While they are being fetched, exactly the configured number should be
+	// in flight and the rest should still be waiting their turn.
+	waitFor(t, "downloads to be in flight", func() bool {
+		return r.worker.peakDownloads() > 1
+	})
+	waitFor(t, "the queue to drain", func() bool {
+		var n int
+		r.pool.QueryRow(`SELECT count(*) FROM items WHERE status='ready'`).Scan(&n)
+		return n == 8
+	})
+
+	peak := r.worker.peakDownloads()
+	if peak > ingest.MaxConcurrentDownloads {
+		t.Errorf("%d downloads at once, limit is %d", peak, ingest.MaxConcurrentDownloads)
+	}
+	if peak < 2 {
+		t.Errorf("peak concurrency %d: downloads are still serial", peak)
+	}
+}
+
+// Every download in flight reports its own progress. One shared slot meant
+// only whichever started last had a bar.
+func TestEachDownloadReportsItsOwnProgress(t *testing.T) {
+	r := newRig(t)
+	r.worker.mu.Lock()
+	r.worker.audioDelay = 1500 * time.Millisecond
+	r.worker.ticks = 1
+	r.worker.mu.Unlock()
+
+	for i := 0; i < 3; i++ {
+		r.addItem("new")
+	}
+	runInBackground(r)
+
+	var st struct {
+		Items []struct {
+			ID        int     `json:"id"`
+			Status    string  `json:"status"`
+			BytesDone int64   `json:"bytes_done"`
+			Progress  float64 `json:"progress"`
+		} `json:"items"`
+	}
+	waitFor(t, "several downloads to report bytes", func() bool {
+		r.get("/api/status", &st)
+		n := 0
+		for _, it := range st.Items {
+			if it.Status == "downloading" && it.BytesDone > 0 {
+				n++
+			}
+		}
+		return n >= 2
+	})
+}
+
+// Cancelling something mid-download must stick. The download finishing
+// afterwards must not write the row back to 'downloaded'.
+func TestCancelWhileDownloading(t *testing.T) {
+	r := newRig(t)
+	r.worker.mu.Lock()
+	r.worker.audioDelay = time.Second
+	r.worker.ticks = 1
+	r.worker.mu.Unlock()
+
+	id := r.addItem("new")
+	runInBackground(r)
+	waitFor(t, "the download to start", func() bool { return r.status(id) == "downloading" })
+
+	if res := r.post(fmt.Sprintf("/api/items/%d/cancel", id)); res.StatusCode != http.StatusOK {
+		t.Fatalf("cancel: status %d", res.StatusCode)
+	}
+	// Long enough for the download to have finished had it been left alone.
+	time.Sleep(1500 * time.Millisecond)
+	if got := r.status(id); got != "archived" {
+		t.Fatalf("status = %q, want archived: a finishing download resurrected it", got)
+	}
+	if p := r.audioPath(id); p != "" {
+		t.Errorf("audio_path = %q, want empty", p)
 	}
 }
