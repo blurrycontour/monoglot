@@ -2,6 +2,7 @@ package io.blurrycontour.monoglot.player
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.os.Bundle
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
@@ -11,7 +12,11 @@ import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 import io.blurrycontour.monoglot.R
 import io.blurrycontour.monoglot.MainActivity
 
@@ -91,25 +96,8 @@ class PlaybackService : MediaSessionService() {
 
         mediaSession = MediaSession.Builder(this, player)
             .setSessionActivity(sessionActivity)
-            // The default layout is previous / play-pause / next, and on a
-            // single-item playlist the outer two collapse to one button that
-            // restarts the episode — which is all the notification offered.
-            // Skipping five seconds is what this app actually does, so those
-            // are the buttons it gets, matching the in-app transport.
-            .setCustomLayout(
-                ImmutableList.of(
-                    CommandButton.Builder()
-                        .setPlayerCommand(Player.COMMAND_SEEK_BACK)
-                        .setIconResId(R.drawable.ic_notif_rewind)
-                        .setDisplayName("Back 5 seconds")
-                        .build(),
-                    CommandButton.Builder()
-                        .setPlayerCommand(Player.COMMAND_SEEK_FORWARD)
-                        .setIconResId(R.drawable.ic_notif_forward)
-                        .setDisplayName("Forward 5 seconds")
-                        .build(),
-                )
-            )
+            .setCallback(Callback())
+            .setCustomLayout(customLayout())
             .build()
 
         // The status-bar glyph was Media3's generic play icon, so a Monoglot
@@ -133,9 +121,72 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /**
+     * The buttons either side of play.
+     *
+     * They have to be custom session commands rather than COMMAND_SEEK_BACK
+     * and COMMAND_SEEK_FORWARD, which is what they were first written as and
+     * why nothing appeared. Android's media controls do not lay themselves out
+     * from the player's commands: the slots are filled from the session's
+     * custom actions, and the standard rewind and fast-forward actions are not
+     * among the ones it draws. The default previous/next pair is, which on a
+     * one-item playlist collapses into the single restart button that was all
+     * the notification ever showed.
+     */
+    private fun customLayout(): ImmutableList<CommandButton> = ImmutableList.of(
+        CommandButton.Builder()
+            .setSessionCommand(SessionCommand(CMD_BACK, Bundle.EMPTY))
+            .setIconResId(R.drawable.ic_notif_rewind)
+            .setDisplayName("Back 5 seconds")
+            .build(),
+        CommandButton.Builder()
+            .setSessionCommand(SessionCommand(CMD_FORWARD, Bundle.EMPTY))
+            .setIconResId(R.drawable.ic_notif_forward)
+            .setDisplayName("Forward 5 seconds")
+            .build(),
+    )
+
+    private inner class Callback : MediaSession.Callback {
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+        ): MediaSession.ConnectionResult {
+            // Every controller has to be told these commands exist, the
+            // notification's included, or its buttons arrive disabled.
+            val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
+                .buildUpon()
+                .add(SessionCommand(CMD_BACK, Bundle.EMPTY))
+                .add(SessionCommand(CMD_FORWARD, Bundle.EMPTY))
+                .build()
+            return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                .setAvailableSessionCommands(commands)
+                .build()
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: Bundle,
+        ): ListenableFuture<SessionResult> {
+            val player = session.player
+            when (customCommand.customAction) {
+                CMD_BACK -> player.seekTo((player.currentPosition - SKIP_MS).coerceAtLeast(0))
+                CMD_FORWARD -> player.seekTo(player.currentPosition + SKIP_MS)
+            }
+            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+        }
+    }
+
     private companion object {
         /** Enough to ride out a blip, few enough that a missing file gives up. */
         const val MAX_RETRIES = 3
+
+        /** Same five seconds as the in-app transport. */
+        const val SKIP_MS = 5_000L
+
+        const val CMD_BACK = "io.blurrycontour.monoglot.BACK_5"
+        const val CMD_FORWARD = "io.blurrycontour.monoglot.FORWARD_5"
     }
 
     override fun onDestroy() {
