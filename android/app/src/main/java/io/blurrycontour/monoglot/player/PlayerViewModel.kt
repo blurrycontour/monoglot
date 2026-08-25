@@ -357,6 +357,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Done, from the finished screen.
+     *
+     * The episode is over, so the mini player has nothing left to offer: it sat
+     * there afterwards holding a finished episode at its last second, inviting
+     * a resume that would replay the final breath and stop again.
+     */
+    fun closeFinished() {
+        dismissFinished()
+        PlaybackHolder.stop()
+    }
+
     fun dismissFinished() {
         _state.value = _state.value.copy(finishedVisible = false, finished = null)
     }

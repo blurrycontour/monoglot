@@ -91,13 +91,16 @@ fun MiniPlayer(
                 }
                 Spacer(Modifier.width(11.dp))
                 Column(Modifier.weight(1f)) {
-                    // The date identifies the episode; the title is the same
-                    // every day for the sources this app carries.
+                    // Source first, then the date that identifies the episode.
+                    // Never the episode title: it is the same every day for the
+                    // sources this app carries.
                     val date = Dates.label(Dates.parse(now.publishedAt))
+                    val line = listOfNotNull(
+                        now.source.ifBlank { null },
+                        date.takeIf { it != "—" },
+                    ).joinToString("  ·  ")
                     Text(
-                        if (date == "—") now.title.ifBlank { "Now playing" }
-                        else listOfNotNull(date, now.source.ifBlank { null })
-                            .joinToString("  ·  "),
+                        line.ifBlank { now.title.ifBlank { "Now playing" } },
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,

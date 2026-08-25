@@ -14,13 +14,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -98,6 +101,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             val ok = repo.api.health()
+            // Only a server that answered is worth remembering: a list full of
+            // typos would defeat the point of having one.
+            if (ok) repo.settings.rememberServer(url, token)
             _state.value = _state.value.copy(
                 serverUrl = url,
                 authToken = token,
@@ -136,6 +142,12 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = _state.value.copy(message = "Offline downloads cleared")
             load()
         }
+    }
+
+    val knownServers = repo.settings.knownServersFlow
+
+    fun forgetServer(url: String) {
+        viewModelScope.launch { repo.settings.forgetServer(url) }
     }
 
     fun invalidateConnection() {
@@ -191,14 +203,60 @@ fun SettingsScreen(visible: Boolean = true) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             SectionCard("Server") {
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    label = { Text("Server URL") },
-                    placeholder = { Text("http://192.168.1.10:8080") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                val known by vm.knownServers.collectAsState(initial = emptyList())
+                var pickerOpen by remember { mutableStateOf(false) }
+
+                Box {
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text("Server URL") },
+                        placeholder = { Text("http://192.168.1.10:8080") },
+                        singleLine = true,
+                        trailingIcon = {
+                            // Only offered once there is something to offer:
+                            // an empty menu is worse than no menu.
+                            if (known.isNotEmpty()) {
+                                IconButton(onClick = { pickerOpen = true }) {
+                                    Icon(Icons.Default.History, "Previous servers")
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    DropdownMenu(
+                        expanded = pickerOpen,
+                        onDismissRequest = { pickerOpen = false },
+                    ) {
+                        known.forEach { server ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        server.url,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                },
+                                trailingIcon = {
+                                    IconButton(onClick = { vm.forgetServer(server.url) }) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            "Forget ${server.url}",
+                                            Modifier.size(16.dp),
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    // Both halves, or switching still means
+                                    // finding the other server's token.
+                                    url = server.url
+                                    token = server.token
+                                    pickerOpen = false
+                                },
+                            )
+                        }
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = token,

@@ -31,6 +31,13 @@ enum class TranscriptMode {
     FULL,
 }
 
+/** A server that has answered before, with the token it answered to. */
+data class KnownServer(val url: String, val token: String)
+
+/** Enough for a dev box, a homelab and a spare. A longer list is a menu to
+ *  read rather than a shortcut. */
+private const val MAX_KNOWN_SERVERS = 5
+
 class SettingsStore(private val context: Context) {
 
     private object Keys {
@@ -45,6 +52,7 @@ class SettingsStore(private val context: Context) {
         val LAST_ITEM = stringPreferencesKey("last_item_id")
         val SERVER_EPOCH = intPreferencesKey("server_epoch")
         val LISTEN_SEEN_AT = stringPreferencesKey("listen_seen_at")
+        val KNOWN_SERVERS = stringPreferencesKey("known_servers")
     }
 
     private val prefs: Flow<Preferences> get() = context.dataStore.data
@@ -108,6 +116,47 @@ class SettingsStore(private val context: Context) {
      * instance's data under another's address.
      */
     val serverEpochFlow: Flow<Int> = pref { it[Keys.SERVER_EPOCH] ?: 0 }
+
+    /**
+     * Servers that have answered at least once, most recent first.
+     *
+     * Only ones that actually connected: a list that remembered every typo
+     * would be worse than no list, since the whole point is to pick a known-good
+     * address rather than retype one. The token is kept alongside, because
+     * switching between a dev box and the homelab means switching both, and
+     * remembering half of a pair does not save the trip.
+     */
+    val knownServersFlow: Flow<List<KnownServer>> = pref { prefs ->
+        (prefs[Keys.KNOWN_SERVERS] ?: "").lineSequence()
+            .mapNotNull { line ->
+                val url = line.substringBefore('\t', "").trim()
+                if (url.isEmpty()) null
+                else KnownServer(url, line.substringAfter('\t', ""))
+            }
+            .toList()
+    }
+
+    /** Records a server that answered, moving it to the front. */
+    suspend fun rememberServer(url: String, token: String) {
+        val cleaned = url.trim().trimEnd('/')
+        if (cleaned.isEmpty()) return
+        context.dataStore.edit { prefs ->
+            val existing = (prefs[Keys.KNOWN_SERVERS] ?: "").lineSequence()
+                .filter { it.isNotBlank() && it.substringBefore('\t') != cleaned }
+                .take(MAX_KNOWN_SERVERS - 1)
+                .toList()
+            prefs[Keys.KNOWN_SERVERS] =
+                (listOf("$cleaned\t${token.trim()}") + existing).joinToString("\n")
+        }
+    }
+
+    suspend fun forgetServer(url: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.KNOWN_SERVERS] = (prefs[Keys.KNOWN_SERVERS] ?: "").lineSequence()
+                .filter { it.isNotBlank() && it.substringBefore('\t') != url }
+                .joinToString("\n")
+        }
+    }
 
     /** Returns true if this was a change of server rather than a re-save. */
     suspend fun setServer(url: String, token: String): Boolean {

@@ -60,16 +60,20 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = {
-                    // Date first, as in the library: every Klartext episode
-                    // carries the same headline, so titling the screen with it
-                    // says only which podcast this is, never which episode.
+                    // Source names the screen, date identifies the episode
+                    // beneath it. Never the episode headline: every Klartext
+                    // episode carries the same one, so it says only which
+                    // podcast this is — which the source already says, shorter.
                     val item = state.bundle?.item
                     val published = Dates.parse(item?.publishedAt)
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                if (item == null) "Loading…"
-                                else Dates.label(published),
+                                when {
+                                    item == null -> "Loading…"
+                                    item.sourceName.isNotBlank() -> item.sourceName
+                                    else -> Dates.label(published)
+                                },
                                 maxLines = 1,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
@@ -90,7 +94,7 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                         item?.let {
                             Text(
                                 listOfNotNull(
-                                    it.sourceName.ifBlank { null },
+                                    Dates.label(published).takeIf { d -> d != "—" },
                                     Dates.time(published).ifBlank { null },
                                 ).joinToString("  ·  "),
                                 style = MaterialTheme.typography.labelSmall,
@@ -147,7 +151,7 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                             FinishedOverlay(
                                 summary = state.finished,
                                 onReplay = { vm.replayEpisode() },
-                                onDone = { vm.dismissFinished(); onBack() },
+                                onDone = { vm.closeFinished(); onBack() },
                                 onDismiss = { vm.dismissFinished() },
                             )
                         }
