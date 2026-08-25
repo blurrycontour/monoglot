@@ -27,10 +27,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -101,13 +104,10 @@ fun ListeningSection(days: List<DayTotal>, modifier: Modifier = Modifier) {
         // The charts and their tooltip share one coordinate space, so a mark
         // can say where it is and the bubble can be placed over it.
         var boxCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
-        var boxWidth by remember { mutableIntStateOf(0) }
-        var tipSize by remember { mutableStateOf(IntSize.Zero) }
 
         Box(
             Modifier
                 .fillMaxWidth()
-                .onSizeChanged { boxWidth = it.width }
                 .onGloballyPositioned { boxCoords = it }
         ) {
             val onPick: (LocalDate, Long, LayoutCoordinates) -> Unit = { day, ms, coords ->
@@ -133,40 +133,44 @@ fun ListeningSection(days: List<DayTotal>, modifier: Modifier = Modifier) {
             }
 
             tip?.let { t ->
-                val density = LocalDensity.current
-                val gap = with(density) { TIP_GAP.toPx() }
-                val margin = with(density) { 4.dp.toPx() }
-                // Sits above the mark, and is held inside the card when it
-                // would otherwise be clipped by an edge.
-                val tipX = (t.centreX - tipSize.width / 2f)
-                    .coerceIn(margin, (boxWidth - tipSize.width - margin).coerceAtLeast(margin))
-                val tipY = (t.topY - tipSize.height - gap).coerceAtLeast(0f)
-
-                // A leader, because a bubble held away from an edge no longer
-                // sits over the thing it describes — and on a calendar of
-                // thirty-one circles, "the one below it" is not obvious.
-                val leader = MaterialTheme.colorScheme.primary
-                Canvas(Modifier.fillMaxSize()) {
-                    drawLine(
-                        color = leader,
-                        start = Offset(t.centreX, tipY + tipSize.height),
-                        end = Offset(t.centreX, t.topY),
-                        strokeWidth = with(density) { 1.5.dp.toPx() },
-                        pathEffect = PathEffect.dashPathEffect(
-                            floatArrayOf(
-                                with(density) { 3.dp.toPx() },
-                                with(density) { 3.dp.toPx() },
-                            )
-                        ),
-                    )
+                // A Popup, not an overlay inside the chart: it takes part in no
+                // layout, so it needs no room reserved for it and is free to
+                // sit over the header when the mark it belongs to is near the
+                // top. Reserving that room inside the plot instead pushed every
+                // chart down by the height of a bubble that is usually absent —
+                // and made the calendar, whose marks are small, mostly gap.
+                Popup(
+                    popupPositionProvider = remember(t) {
+                        object : PopupPositionProvider {
+                            override fun calculatePosition(
+                                anchorBounds: IntRect,
+                                windowSize: IntSize,
+                                layoutDirection: LayoutDirection,
+                                popupContentSize: IntSize,
+                            ): IntOffset {
+                                // Anchored on the chart, offset to the mark:
+                                // centred over it, and sitting entirely above
+                                // it so the tail lands on its top edge.
+                                val x = anchorBounds.left + t.centreX.toInt() -
+                                    popupContentSize.width / 2
+                                val y = anchorBounds.top + t.topY.toInt() -
+                                    popupContentSize.height
+                                return IntOffset(
+                                    x.coerceIn(
+                                        0,
+                                        (windowSize.width - popupContentSize.width)
+                                            .coerceAtLeast(0),
+                                    ),
+                                    y.coerceAtLeast(0),
+                                )
+                            }
+                        }
+                    },
+                    properties = PopupProperties(focusable = false),
+                    onDismissRequest = { tip = null },
+                ) {
+                    TipBubble(t)
                 }
-
-                TipBubble(
-                    tip = t,
-                    x = tipX,
-                    y = tipY,
-                    onSize = { tipSize = it },
-                )
             }
         }
     }
@@ -232,58 +236,61 @@ private data class Tip(
  * only place an exact figure appears, and rounding a first short session to
  * "under a minute" twice over would be no answer at all.
  */
+/**
+ * The readout for one mark: a bubble with a dotted tail beneath it.
+ *
+ * The tail belongs to the bubble rather than being drawn on the chart, because
+ * the bubble is a Popup and the chart cannot paint outside its own bounds. It
+ * also means the two can never drift apart.
+ *
+ * Seconds included: on a chart whose bars are scaled against each other, this
+ * is the only exact figure anywhere.
+ */
 @Composable
-private fun TipBubble(
-    tip: Tip,
-    x: Float,
-    y: Float,
-    onSize: (IntSize) -> Unit,
-) {
-    Surface(
-        // The theme's own accent container. inverseSurface was neither: on a
-        // dark theme it is a white card with black text, which belongs to no
-        // theme in this app and reads as a piece of another product.
-        color = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-        shape = RoundedCornerShape(8.dp),
-        shadowElevation = 3.dp,
-        modifier = Modifier
-            .onSizeChanged(onSize)
-            .offset { IntOffset(x.toInt(), y.toInt()) },
-    ) {
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
-            Text(
-                tip.date.format(DateTimeFormatter.ofPattern("EEE d MMM")),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
-            )
-            Text(
-                formatExact(tip.ms),
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
+private fun TipBubble(tip: Tip) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Surface(
+            // The theme's own accent container. inverseSurface was neither: on
+            // a dark theme it is a white card with black text, which belongs to
+            // no theme in this app and reads as a piece of another product.
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+            shape = RoundedCornerShape(8.dp),
+            shadowElevation = 3.dp,
+        ) {
+            Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                Text(
+                    tip.date.format(DateTimeFormatter.ofPattern("EEE d MMM")),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
+                )
+                Text(
+                    formatExact(tip.ms),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+
+        val leader = MaterialTheme.colorScheme.primary
+        Canvas(Modifier.width(2.dp).height(TIP_GAP + 8.dp)) {
+            drawLine(
+                color = leader,
+                start = Offset(size.width / 2f, 0f),
+                end = Offset(size.width / 2f, size.height),
+                strokeWidth = size.width,
+                pathEffect = PathEffect.dashPathEffect(
+                    floatArrayOf(size.width * 2, size.width * 2)),
             )
         }
     }
 }
 
-/**
- * Room above the marks for a tooltip to sit in.
- *
- * Reserved rather than fought over: a bubble placed above the tallest bar would
- * otherwise be pushed back down on top of it, which is where it says least.
- *
- * Enough for the whole bubble — two lines and its padding — plus the gap and
- * the leader beneath it. At 46dp it was enough for neither: the bubble was
- * clamped to the ceiling and came to rest flush on the bar it described, with
- * the leader squeezed out of existence between them.
- */
-private val TIP_HEADROOM = 76.dp
+/** Clear air between the bubble's tail and the mark it points at. */
+private val TIP_GAP = 6.dp
 
-/** Clear air between the bubble and the mark, for the leader to cross. */
-private val TIP_GAP = 12.dp
-
-private const val BAR_AREA_DP = 96
+private const val BAR_AREA_DP = 108
 
 @Composable
 private fun WeekBars(
@@ -296,8 +303,6 @@ private fun WeekBars(
     // does not render as one enormous bar and a week of zeroes.
     val peak = maxOf(days.maxOfOrNull { byDay[it] ?: 0L } ?: 0L, 1L)
 
-    Column {
-    Spacer(Modifier.height(TIP_HEADROOM))
     Row(
         Modifier.fillMaxWidth().height(BAR_AREA_DP.dp + 38.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -374,7 +379,6 @@ private fun WeekBars(
             }
         }
     }
-    }
 }
 
 @Composable
@@ -393,7 +397,6 @@ private fun MonthGrid(
     val cells = List(lead) { null } + (1..month.lengthOfMonth()).map { month.atDay(it) }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Spacer(Modifier.height(TIP_HEADROOM - 6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             DayOfWeek.entries.forEach { dow ->
                 Text(
