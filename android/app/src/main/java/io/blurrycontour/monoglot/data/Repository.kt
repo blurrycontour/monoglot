@@ -164,7 +164,9 @@ class Repository(
         }
     }
 
-    suspend fun listeningHistory(days: Int = 90): List<DayTotal> =
+    /** A year, so stepping back through the charts has something to show.
+     *  One row per day with any listening at all: a few hundred at most. */
+    suspend fun listeningHistory(days: Int = 365): List<DayTotal> =
         runCatching { api.listening(days) }.getOrDefault(emptyList())
 
     suspend fun episodeSummary(itemId: Int): EpisodeSummary? =

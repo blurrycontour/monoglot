@@ -306,16 +306,37 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Back to the beginning, on the server and in the player both.
+     *
+     * Order matters here. This used to clear the stored position first and seek
+     * afterwards, with two round trips in between — while the player carried on
+     * and its ticker wrote the position it was still at, ten times a second,
+     * straight back over the reset. Stopping first means nothing is in flight
+     * to undo the work.
+     */
     fun clearProgress() {
         val id = itemId
         if (id <= 0) return
         viewModelScope.launch {
+            PlaybackHolder.pause()
+            PlaybackHolder.seekTo(0)
+            PlaybackHolder.forgetSavedPosition()
+
             runCatching { repo.api.resetProgress(id) }
             runCatching { repo.clearLocalProgress(id) }
-            PlaybackHolder.forgetSavedPosition()
+
             sawBeforeEnd = false
-            _state.value = _state.value.copy(completed = false)
-            seekTo(0)
+            _state.value = _state.value.copy(
+                completed = false,
+                positionMs = 0,
+                activeTokenIdx = -1,
+                activeSegmentIdx = -1,
+                revealedSegmentIdx = -1,
+                // Clearing a finished episode leaves nothing to celebrate.
+                finishedVisible = false,
+                finished = null,
+            )
         }
     }
 

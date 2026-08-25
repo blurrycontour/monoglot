@@ -8,7 +8,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -51,64 +57,87 @@ fun ListeningSection(days: List<DayTotal>, modifier: Modifier = Modifier) {
         }.toMap()
     }
     var tab by remember { mutableIntStateOf(0) }
+    // How many weeks or months back from the current one. Zero is now; the
+    // forward arrow is disabled there rather than hidden, so the control does
+    // not move under the thumb as you step around.
+    var back by remember { mutableIntStateOf(0) }
     // Tapping a bar or a day names it, rather than printing a number on every
     // mark and turning the chart into a table.
     var picked by remember { mutableStateOf<LocalDate?>(null) }
 
     Column(modifier) {
         PrimaryTabRow(selectedTabIndex = tab, containerColor = Color.Transparent) {
-            Tab(selected = tab == 0, onClick = { tab = 0; picked = null },
+            Tab(selected = tab == 0, onClick = { tab = 0; back = 0; picked = null },
                 text = { Text("Week") })
-            Tab(selected = tab == 1, onClick = { tab = 1; picked = null },
+            Tab(selected = tab == 1, onClick = { tab = 1; back = 0; picked = null },
                 text = { Text("Month") })
         }
         Spacer(Modifier.height(14.dp))
 
         val today = LocalDate.now()
-        val range = if (tab == 0) lastSevenDays(today) else monthDays(today)
+        val weekEnd = today.minusWeeks(back.toLong())
+        val month = YearMonth.from(today).minusMonths(back.toLong())
+        val range = if (tab == 0) sevenDaysEnding(weekEnd) else monthDays(month)
         val total = range.sumOf { byDay[it] ?: 0L }
 
-        Headline(picked = picked, pickedMs = picked?.let { byDay[it] ?: 0L },
-            total = total, weekly = tab == 0)
+        Header(
+            picked = picked,
+            pickedMs = picked?.let { byDay[it] ?: 0L },
+            total = total,
+            label = if (tab == 0) weekLabel(range, back) else monthLabel(month, today),
+            canGoForward = back > 0,
+            onBack = { back++; picked = null },
+            onForward = { if (back > 0) back--; picked = null },
+        )
         Spacer(Modifier.height(12.dp))
 
         if (tab == 0) {
             WeekBars(days = range, byDay = byDay, picked = picked,
                 onPick = { picked = if (picked == it) null else it })
         } else {
-            MonthGrid(month = YearMonth.from(today), byDay = byDay, today = today,
+            MonthGrid(month = month, byDay = byDay, today = today,
                 picked = picked, onPick = { picked = if (picked == it) null else it })
         }
     }
 }
 
-/** The one number worth reading without touching anything. */
+/** The one number worth reading without touching anything, and the two
+ *  controls for moving between periods. */
 @Composable
-private fun Headline(
+private fun Header(
     picked: LocalDate?,
     pickedMs: Long?,
     total: Long,
-    weekly: Boolean,
+    label: String,
+    canGoForward: Boolean,
+    onBack: () -> Unit,
+    onForward: () -> Unit,
 ) {
-    val label = when {
-        picked != null -> picked.format(DateTimeFormatter.ofPattern("EEEE d MMM"))
-        weekly -> "Last 7 days"
-        else -> "This month"
-    }
-    Row(verticalAlignment = Alignment.Bottom) {
-        Text(
-            formatListened(if (picked != null) pickedMs ?: 0L else total),
-            fontSize = 26.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 4.dp),
-        )
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                formatListened(if (picked != null) pickedMs ?: 0L else total),
+                fontSize = 26.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                picked?.format(DateTimeFormatter.ofPattern("EEEE d MMM")) ?: label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        IconButton(onClick = onBack) {
+            Icon(Icons.Default.ChevronLeft, "Earlier")
+        }
+        IconButton(onClick = onForward, enabled = canGoForward) {
+            Icon(
+                Icons.Default.ChevronRight,
+                "Later",
+                tint = if (canGoForward) LocalContentColor.current
+                       else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+            )
+        }
     }
 }
 
@@ -126,7 +155,7 @@ private fun WeekBars(
     val peak = maxOf(days.maxOfOrNull { byDay[it] ?: 0L } ?: 0L, 1L)
 
     Row(
-        Modifier.fillMaxWidth().height(BAR_AREA_DP.dp + 22.dp),
+        Modifier.fillMaxWidth().height(BAR_AREA_DP.dp + 38.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.Bottom,
     ) {
@@ -169,7 +198,19 @@ private fun WeekBars(
                         )
                     }
                 }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(4.dp))
+                // Seven bars is few enough to label each one, and without a
+                // value there is no way to tell a busy day from a quiet one:
+                // the tallest bar is always full height, whatever it stands
+                // for, because the scale follows the peak in view.
+                Text(
+                    if (ms > 0) formatCompact(ms) else "",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(2.dp))
                 Text(
                     day.dayOfWeek.getDisplayName(TextStyle.NARROW, Locale.getDefault()),
                     style = MaterialTheme.typography.labelSmall,
@@ -273,21 +314,58 @@ private fun DayCircle(
     }
 }
 
-/** "1h 20m", "35 min", "—". Rounded: this is a record kept for pleasure. */
+/**
+ * "1h 20m", "35 min", "under a minute", "—".
+ *
+ * Sub-minute listening reads as "—" only when there was none at all: a first
+ * session of forty seconds showing a dash beside a full-height bar is the
+ * chart calling itself a liar.
+ */
 fun formatListened(ms: Long): String {
     val minutes = ms / 60_000
     return when {
-        minutes <= 0 -> "—"
+        ms <= 0L -> "—"
+        minutes < 1 -> "under a minute"
         minutes < 60 -> "$minutes min"
         minutes % 60 == 0L -> "${minutes / 60}h"
         else -> "${minutes / 60}h ${minutes % 60}m"
     }
 }
 
-private fun lastSevenDays(today: LocalDate): List<LocalDate> =
-    (6 downTo 0).map { today.minusDays(it.toLong()) }
+/** The same figure, short enough to sit under a bar. */
+private fun formatCompact(ms: Long): String {
+    val minutes = ms / 60_000
+    return when {
+        minutes < 1 -> "<1m"
+        minutes < 60 -> "${minutes}m"
+        minutes % 60 == 0L -> "${minutes / 60}h"
+        else -> "${minutes / 60}h${minutes % 60}"
+    }
+}
 
-private fun monthDays(today: LocalDate): List<LocalDate> {
-    val m = YearMonth.from(today)
-    return (1..m.lengthOfMonth()).map { m.atDay(it) }
+private fun sevenDaysEnding(last: LocalDate): List<LocalDate> =
+    (6 downTo 0).map { last.minusDays(it.toLong()) }
+
+private fun monthDays(month: YearMonth): List<LocalDate> =
+    (1..month.lengthOfMonth()).map { month.atDay(it) }
+
+private fun weekLabel(days: List<LocalDate>, back: Int): String {
+    if (back == 0) return "Last 7 days"
+    val first = days.first()
+    val last = days.last()
+    val fmt = DateTimeFormatter.ofPattern("d MMM")
+    return if (first.month == last.month) {
+        "${first.dayOfMonth}–${last.format(fmt)}"
+    } else {
+        "${first.format(fmt)} – ${last.format(fmt)}"
+    }
+}
+
+private fun monthLabel(month: YearMonth, today: LocalDate): String {
+    val name = month.month.getDisplayName(TextStyle.FULL, Locale.getDefault())
+    return when {
+        month == YearMonth.from(today) -> "This month"
+        month.year == today.year -> name
+        else -> "$name ${month.year}"
+    }
 }
