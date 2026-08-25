@@ -48,14 +48,18 @@ type TranscriptResponse struct {
 // Idempotent by construction: segments/tokens for the item are deleted before
 // re-insert, and an item already at 'ready' is never picked up, so re-running
 // the pipeline does not re-transcribe finished work.
-func TranscribePending(ctx context.Context, pool *sql.DB, workerURL, rawDir string, limit int) error {
+// Returns how many jobs it took on. Zero means nothing was selectable, which
+// is the only reliable "no work" signal now that downloads run alongside this:
+// comparing queue lengths before and after cannot tell a transcription that
+// finished from a download that arrived while it ran.
+func TranscribePending(ctx context.Context, pool *sql.DB, workerURL, rawDir string, limit int) (int, error) {
 	rows, err := pool.QueryContext(ctx, `
 		SELECT id, audio_path FROM items
 		WHERE status = 'downloaded' AND audio_path IS NOT NULL
 		ORDER BY published_at DESC NULLS LAST
 		LIMIT ?`, limit)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	type job struct {
 		id   int
@@ -66,13 +70,13 @@ func TranscribePending(ctx context.Context, pool *sql.DB, workerURL, rawDir stri
 		var j job
 		if err := rows.Scan(&j.id, &j.path); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		jobs = append(jobs, j)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return 0, err
 	}
 
 	for _, j := range jobs {
@@ -88,7 +92,7 @@ func TranscribePending(ctx context.Context, pool *sql.DB, workerURL, rawDir stri
 		}
 		log.Printf("transcribe item %d: ready in %s", j.id, time.Since(start).Round(time.Second))
 	}
-	return nil
+	return len(jobs), nil
 }
 
 // errSkip means the item is no longer ours to work on. Not a failure: the row

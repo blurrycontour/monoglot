@@ -422,6 +422,29 @@ func TestItemQueuedMidRunIsPickedUp(t *testing.T) {
 	})
 }
 
+// Downloading must not wait for the CPU-bound stage. This is what "waiting to
+// download" for five minutes looked like, and what made cancelling the current
+// episode appear to release five others at once.
+func TestDownloadsRunDuringTranscription(t *testing.T) {
+	r := newRig(t)
+	r.worker.mu.Lock()
+	r.worker.ticks = 150 // ~3s, long enough to observe the overlap
+	r.worker.mu.Unlock()
+
+	busy := r.addItem("downloaded")
+	runInBackground(r)
+	waitFor(t, "transcription to start", func() bool { return r.status(busy) == "transcribing" })
+
+	late := r.addItem("new")
+	waitFor(t, "the late arrival to be downloaded", func() bool {
+		return r.status(late) == "downloaded"
+	})
+	// The point of the test: this happened while the CPU stage was still busy.
+	if got := r.status(busy); got != "transcribing" {
+		t.Fatalf("the transcription finished first (%q); the overlap was not observed", got)
+	}
+}
+
 // A trigger that arrives during a run is remembered rather than dropped.
 func TestTriggerDuringRunReruns(t *testing.T) {
 	r := newRig(t)

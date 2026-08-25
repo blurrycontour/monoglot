@@ -88,70 +88,144 @@ func (r *Runner) Run(ctx context.Context, reason string) {
 		log.Printf("ERROR ingest: discover: %v", err)
 	}
 
-	// Download and transcription alternate, one transcription at a time.
+	// Downloads run alongside transcription rather than taking turns with it.
 	//
-	// The stages used to run strictly in sequence — download everything, then
-	// drain the transcription queue — so anything queued after the run had
-	// passed the download stage sat in 'new' behind every remaining
-	// transcription, and then behind the watchdog's five-minute tick.
-	// Downloading is I/O in seconds; there is no reason for it to wait on
-	// minutes of CPU.
-	for cycle := 0; cycle < maxCycles; cycle++ {
-		downloadable, err := countDownloadable(ctx, r.pool)
-		if err != nil {
-			log.Printf("ERROR ingest: counting downloadable: %v", err)
-			break
-		}
-		pending, err := countPending(ctx, r.pool)
-		if err != nil {
-			log.Printf("ERROR ingest: counting pending: %v", err)
-			break
-		}
-		if downloadable == 0 && pending == 0 {
-			log.Printf("ingest: queue empty")
-			break
-		}
-		log.Printf("ingest: %d to download, %d to transcribe (cycle %d)",
-			downloadable, pending, cycle+1)
+	// They used to alternate: download everything, transcribe one, download
+	// again. Anything queued while a transcription was running therefore sat
+	// at "waiting to download" for the whole of it — five minutes of CPU
+	// blocking two seconds of I/O — and only moved when the current episode
+	// finished or was cancelled, which is exactly what it looked like.
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		r.downloadLoop(ctx, stop)
+	}()
 
-		if downloadable > 0 {
-			if err := DownloadPending(ctx, r.pool, r.cfg.AudioDir, 40); err != nil {
-				log.Printf("ERROR ingest: download: %v", err)
-			}
-		}
-		if pending > 0 {
-			// One item per cycle, and re-selected each time: a batch picked up
-			// front goes stale the moment anything is cancelled.
-			if err := TranscribePending(ctx, r.pool, r.cfg.WorkerURL, r.cfg.RawDir, 1); err != nil {
-				log.Printf("ERROR ingest: transcribe: %v", err)
-				break
-			}
-		}
-		if ctx.Err() != nil {
-			log.Printf("ingest: stopping, context ended: %v", ctx.Err())
-			break
-		}
-
-		// Guard against a stage that fails without changing status, which would
-		// otherwise spin here forever. Say why: a silent exit here left episodes
-		// reading as "preparing" with nothing in the log to explain it.
-		d, _ := countDownloadable(ctx, r.pool)
-		p, _ := countPending(ctx, r.pool)
-		if d >= downloadable && p >= pending {
-			log.Printf("ingest: stopping, no progress this cycle "+
-				"(%d/%d before, %d/%d after) — see items.error for why",
-				downloadable, pending, d, p)
-			break
-		}
-	}
+	r.transcribeLoop(ctx)
+	close(stop)
+	wg.Wait()
 
 	log.Printf("ingest: run done in %s", time.Since(start).Round(time.Second))
 }
 
-// maxCycles bounds the alternation. One transcription per cycle, so reaching
-// it means new work has been arriving for as long as the run has been going;
-// the run ends and the watchdog picks up the rest.
-const maxCycles = 200
+// maxJobs bounds a single run's transcriptions. Reaching it means work has
+// been arriving for as long as the run has been going; the run ends and the
+// watchdog picks up the rest rather than one run continuing forever.
+const maxJobs = 200
+
+// idlePoll is how often each loop re-checks for work the other one produced.
+// Both queries are indexed counts against a local file; this is cheap.
+const idlePoll = time.Second
+
+// maxIdle is how long the transcriber waits on a downloader that is producing
+// nothing before giving up on the run.
+const maxIdle = 5 * time.Minute
+
+// downloadLoop fetches audio for as long as the run lasts. Serial within
+// itself — one file at a time, so the progress the app shows has one subject —
+// but concurrent with transcription, which is someone else's CPU.
+func (r *Runner) downloadLoop(ctx context.Context, stop <-chan struct{}) {
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		n, err := countDownloadable(ctx, r.pool)
+		if err != nil {
+			log.Printf("ERROR ingest: counting downloadable: %v", err)
+			return
+		}
+		if n == 0 {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			case <-time.After(idlePoll):
+			}
+			continue
+		}
+
+		done, err := DownloadPending(ctx, r.pool, r.cfg.AudioDir, 40)
+		if err != nil {
+			log.Printf("ERROR ingest: download: %v", err)
+			return
+		}
+		if done == 0 {
+			// Selectable but not selected: the two conditions disagree, which
+			// is the shape of every stall this pipeline has had. Stop rather
+			// than spin, and say so.
+			log.Printf("ingest: download stage selected nothing while %d item(s) "+
+				"looked downloadable — stopping", n)
+			return
+		}
+	}
+}
+
+// transcribeLoop works the transcription queue until there is nothing left to
+// transcribe and nothing on its way. It owns when the run ends.
+func (r *Runner) transcribeLoop(ctx context.Context) {
+	idleSince := time.Time{}
+	for jobs := 0; jobs < maxJobs; {
+		pending, err := countPending(ctx, r.pool)
+		if err != nil {
+			log.Printf("ERROR ingest: counting pending: %v", err)
+			return
+		}
+
+		if pending == 0 {
+			// Nothing to transcribe now — but the downloader may be about to
+			// produce something, so ending the run here would strand it.
+			waiting, err := countIncoming(ctx, r.pool)
+			if err != nil || waiting == 0 {
+				log.Printf("ingest: queue empty")
+				return
+			}
+			if idleSince.IsZero() {
+				idleSince = time.Now()
+			} else if time.Since(idleSince) > maxIdle {
+				log.Printf("ingest: %d item(s) still not downloaded after %s, ending run",
+					waiting, maxIdle)
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(idlePoll):
+			}
+			continue
+		}
+		idleSince = time.Time{}
+
+		log.Printf("ingest: %d item(s) to transcribe", pending)
+		// One at a time, re-selected each pass: a batch picked up front goes
+		// stale the moment anything is cancelled.
+		done, err := TranscribePending(ctx, r.pool, r.cfg.WorkerURL, r.cfg.RawDir, 1)
+		if err != nil {
+			log.Printf("ERROR ingest: transcribe: %v", err)
+			return
+		}
+		if done == 0 {
+			// Counted as pending but not selected. Same disagreement as above,
+			// and the reason the app used to say "preparing" indefinitely.
+			log.Printf("ingest: %d item(s) pending but none selectable — stopping, "+
+				"see items.error for why", pending)
+			return
+		}
+		jobs += done
+		if ctx.Err() != nil {
+			log.Printf("ingest: stopping, context ended: %v", ctx.Err())
+			return
+		}
+	}
+	log.Printf("ingest: reached the %d job limit for one run; the watchdog will continue", maxJobs)
+}
 
 // StartCron runs the pipeline daily at the configured local time. In-process
 // rather than an external scheduler: fewer moving parts, per the spec.
@@ -284,6 +358,17 @@ func countPending(ctx context.Context, pool *sql.DB) (int, error) {
 	err := pool.QueryRowContext(ctx,
 		`SELECT count(*) FROM items
 		 WHERE status = 'downloaded' AND audio_path IS NOT NULL`).Scan(&n)
+	return n, err
+}
+
+// countIncoming is work the download stage still owes the transcriber: items
+// waiting to be fetched, and the one being fetched right now.
+func countIncoming(ctx context.Context, pool *sql.DB) (int, error) {
+	var n int
+	err := pool.QueryRowContext(ctx, `
+		SELECT count(*) FROM items
+		WHERE status = 'downloading'
+		   OR (status = 'new' AND audio_url IS NOT NULL AND audio_url <> '')`).Scan(&n)
 	return n, err
 }
 

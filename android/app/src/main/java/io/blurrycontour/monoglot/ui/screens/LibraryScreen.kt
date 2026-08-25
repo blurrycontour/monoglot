@@ -32,6 +32,8 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
@@ -106,6 +108,9 @@ private const val MIN_REFRESH_MS = 550L
  *  off to when nothing has changed. */
 private const val FAST_POLL_MS = 6_000L
 private const val SLOW_POLL_MS = 60_000L
+
+/** How tall the queue sheet may grow. Beyond this it scrolls. */
+private val QUEUE_SHEET_MAX = 520.dp
 
 class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = Graph.repository
@@ -1220,11 +1225,24 @@ private fun QueueSheet(
     onCancel: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // The sheet is sized by its content, so removing a row used to shrink it —
+    // undoing a drag the user had just made to see more of the queue.
+    // Cancelling an episode is precisely when that happened. The height only
+    // ever grows while the sheet is open, and resets when it is reopened.
+    val density = LocalDensity.current
+    var tallest by remember { mutableStateOf(0.dp) }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .heightIn(max = 520.dp)
+                .heightIn(min = tallest, max = QUEUE_SHEET_MAX)
+                .onSizeChanged {
+                    with(density) {
+                        val h = it.height.toDp()
+                        if (h > tallest) tallest = h.coerceAtMost(QUEUE_SHEET_MAX)
+                    }
+                }
                 .verticalScroll(rememberScrollState())
                 .padding(start = 20.dp, end = 20.dp, bottom = 32.dp),
         ) {

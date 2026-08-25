@@ -52,9 +52,13 @@ func DeferOutOfWindow(ctx context.Context, pool *sql.DB) error {
 }
 
 // DownloadPending moves every item in status='new' through to 'downloaded'.
-func DownloadPending(ctx context.Context, pool *sql.DB, audioDir string, limit int) error {
+// Returns how many it attempted, which is what the run loop uses to tell "did
+// nothing because there was nothing to do" from "did nothing because it is
+// stuck" — a count that has to be inferred from before/after totals gets that
+// wrong the moment another stage is running alongside it.
+func DownloadPending(ctx context.Context, pool *sql.DB, audioDir string, limit int) (int, error) {
 	if err := DeferOutOfWindow(ctx, pool); err != nil {
-		return err
+		return 0, err
 	}
 	rows, err := pool.QueryContext(ctx, `
 		SELECT id, audio_url FROM items
@@ -62,7 +66,7 @@ func DownloadPending(ctx context.Context, pool *sql.DB, audioDir string, limit i
 		ORDER BY published_at DESC NULLS LAST
 		LIMIT ?`, limit)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	type job struct {
 		id  int
@@ -73,13 +77,13 @@ func DownloadPending(ctx context.Context, pool *sql.DB, audioDir string, limit i
 		var j job
 		if err := rows.Scan(&j.id, &j.url); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		jobs = append(jobs, j)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return 0, err
 	}
 
 	for _, j := range jobs {
@@ -87,8 +91,11 @@ func DownloadPending(ctx context.Context, pool *sql.DB, audioDir string, limit i
 			log.Printf("ERROR download item %d: %v", j.id, err)
 			markFailed(ctx, pool, j.id, err)
 		}
+		if ctx.Err() != nil {
+			break
+		}
 	}
-	return nil
+	return len(jobs), nil
 }
 
 func downloadItem(ctx context.Context, pool *sql.DB, audioDir string, id int, url string) error {

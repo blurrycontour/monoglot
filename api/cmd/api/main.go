@@ -66,11 +66,11 @@ func main() {
 				log.Fatalf("discover: %v", err)
 			}
 		case "download":
-			if err := ingest.DownloadPending(ctx, pool, cfg.AudioDir, 10); err != nil {
+			if _, err := ingest.DownloadPending(ctx, pool, cfg.AudioDir, 10); err != nil {
 				log.Fatalf("download: %v", err)
 			}
 		case "transcribe":
-			if err := ingest.TranscribePending(ctx, pool, cfg.WorkerURL, cfg.RawDir, 5); err != nil {
+			if _, err := ingest.TranscribePending(ctx, pool, cfg.WorkerURL, cfg.RawDir, 5); err != nil {
 				log.Fatalf("transcribe: %v", err)
 			}
 		default:
