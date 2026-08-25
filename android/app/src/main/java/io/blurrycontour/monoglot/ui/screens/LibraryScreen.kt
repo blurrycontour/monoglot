@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -355,6 +356,19 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Asks the server to look for new episodes.
+     *
+     * Offered from the empty library because that is where the need arises;
+     * the System tab has the same action beside the figures that justify it.
+     */
+    fun triggerIngest() {
+        viewModelScope.launch {
+            runCatching { repo.api.triggerIngest() }
+            refreshMeta()
+        }
+    }
+
     /** Reveals another page of never-fetched items. They are listed but not
      *  downloaded: fetching one is an explicit choice, because it costs a
      *  download and a minute of transcription. */
@@ -566,9 +580,25 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
                         ServerErrorState(state.error!!, onRetry = { vm.refresh() })
                     }
 
-                    shown.isEmpty() -> item { EmptyState(state.filter) }
-
                     else -> {
+                        // An empty library is not a dead end when the source
+                        // has a back catalogue: the archive and its Show more
+                        // button used to live in this branch's sibling, so
+                        // they were unreachable in exactly the situation that
+                        // most needs them — nothing fetched yet, and the only
+                        // way out being a round trip to the System tab in the
+                        // hope that ingestion turns something up.
+                        if (shown.isEmpty()) {
+                            item(key = "empty") {
+                                EmptyState(
+                                    filter = state.filter,
+                                    hasArchive = state.hasArchive,
+                                    ingesting = state.status?.ingestRunning == true,
+                                    onFetchNew = { vm.triggerIngest() },
+                                )
+                            }
+                        }
+
                         Dates.groupItems(shown).forEach { (header, groupItems) ->
                             stickyHeader(key = "h-$header") { SectionHeader(header, groupItems.size) }
                             items(groupItems, key = { it.id }) { item ->
@@ -1222,9 +1252,15 @@ private fun rememberInfiniteShimmer(): State<Float> {
 }
 
 @Composable
-private fun EmptyState(filter: LibraryFilter) {
+private fun EmptyState(
+    filter: LibraryFilter,
+    hasArchive: Boolean,
+    ingesting: Boolean,
+    onFetchNew: () -> Unit,
+) {
+    val filtered = filter != LibraryFilter.ALL
     Column(
-        Modifier.fillMaxWidth().padding(32.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(50.dp))
@@ -1232,16 +1268,46 @@ private fun EmptyState(filter: LibraryFilter) {
             tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(14.dp))
         Text(
-            if (filter == LibraryFilter.ALL) "No episodes yet" else "Nothing matches this filter",
+            when {
+                filtered -> "Nothing matches this filter"
+                hasArchive -> "Nothing fetched yet"
+                else -> "No episodes yet"
+            },
             style = MaterialTheme.typography.titleMedium,
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            if (filter == LibraryFilter.ALL) "Pull down to refresh, or fetch new episodes from the System tab."
-            else "Try a different filter, or show everything.",
+            when {
+                filtered -> "Try a different filter, or show everything."
+                // The button is directly below, so say so rather than sending
+                // the reader to another tab.
+                hasArchive -> "This source has episodes the server has not " +
+                    "fetched. Show more lists them, and each one can be " +
+                    "fetched on its own."
+                else -> "Pull down to refresh, or fetch new episodes from the System tab."
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
         )
+        // Nothing here and nothing in the archive either: the only thing that
+        // can help is ingestion, so offer it here rather than describing where
+        // else to go and find it.
+        if (!filtered && !hasArchive) {
+            Spacer(Modifier.height(18.dp))
+            Button(onClick = onFetchNew, enabled = !ingesting) {
+                if (ingesting) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Looking…")
+                } else {
+                    Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Fetch new episodes")
+                }
+            }
+        }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
