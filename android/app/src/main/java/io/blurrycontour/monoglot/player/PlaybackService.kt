@@ -170,9 +170,32 @@ class PlaybackService : MediaSessionService() {
                 .add(SessionCommand(CMD_PREV_SENTENCE, Bundle.EMPTY))
                 .add(SessionCommand(CMD_NEXT_SENTENCE, Bundle.EMPTY))
                 .build()
-            return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+
+            val accepted = MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(commands)
-                .build()
+
+            // The system draws a skip-to-previous button of its own whenever
+            // that command is available, and on a one-item playlist it does
+            // nothing but restart the episode. It was not free: it occupied
+            // one of the five slots, which is why the fourth custom button —
+            // next sentence — had nowhere to go and silently vanished.
+            //
+            // Withdrawn from the notification controller only. The app's own
+            // controller keeps the full set; it never calls these, but a
+            // session that reports different capabilities to different callers
+            // for no reason is a trap for whoever reads this next.
+            if (session.isMediaNotificationController(controller)) {
+                accepted.setAvailablePlayerCommands(
+                    MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
+                        .buildUpon()
+                        .remove(Player.COMMAND_SEEK_TO_PREVIOUS)
+                        .remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                        .remove(Player.COMMAND_SEEK_TO_NEXT)
+                        .remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                        .build()
+                )
+            }
+            return accepted.build()
         }
 
         override fun onCustomCommand(
