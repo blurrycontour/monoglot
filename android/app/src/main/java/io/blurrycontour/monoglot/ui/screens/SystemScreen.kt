@@ -31,6 +31,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import io.blurrycontour.monoglot.data.BootstrapStatus
 import io.blurrycontour.monoglot.data.ContainerStat
+import io.blurrycontour.monoglot.data.DayTotal
 import io.blurrycontour.monoglot.data.Graph
 import io.blurrycontour.monoglot.data.SourceStats
 import io.blurrycontour.monoglot.data.SystemInfo
@@ -44,6 +45,7 @@ data class SystemState(
     val info: SystemInfo? = null,
     val bootstrap: BootstrapStatus = BootstrapStatus(),
     val error: String? = null,
+    val listening: List<DayTotal> = emptyList(),
     val message: String? = null,
     val busy: Boolean = false,
     val refreshing: Boolean = false,
@@ -77,6 +79,12 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
                 // screen shows it finishing rather than needing a manual
                 // refresh to find out.
                 if (it.bootstrap.running) pollBootstrap()
+            }
+            // Flush anything the phone banked while offline before asking for
+            // totals, or today's bar arrives one session out of date.
+            runCatching { repo.syncListening() }
+            runCatching { repo.listeningHistory() }.onSuccess {
+                _state.value = _state.value.copy(listening = it)
             }
             runCatching { repo.api.system() }
                 .onSuccess {
@@ -245,6 +253,11 @@ fun SystemScreen(visible: Boolean = true) {
                         StatRow("Words looked up", "${sys.vocabulary.lookups}")
                         StatRow("Known", "${sys.vocabulary.known}")
                         StatRow("Learning", "${sys.vocabulary.learning}")
+                    }
+
+                    // Directly under the figures it expands on.
+                    SectionCard("Listening") {
+                        ListeningSection(state.listening)
                     }
 
                     SectionCard("Sources") {

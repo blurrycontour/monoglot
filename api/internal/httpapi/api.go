@@ -61,6 +61,8 @@ func (s *Server) Routes() http.Handler {
 
 		r.Get("/api/lookup", s.lookup)
 		r.Post("/api/lookup/record", s.postRecordLookup)
+		r.Get("/api/listening", s.getListening)
+		r.Post("/api/listening", s.postListening)
 		r.Post("/api/words/{lemma}/status", s.postWordStatus)
 		r.Get("/api/words", s.listWords)
 		r.Post("/api/words/delete", s.deleteWords)

@@ -249,3 +249,13 @@ data class SystemInfo(
     @SerialName("listened_ms") val listenedMs: Long = 0,
     val containers: List<ContainerStat> = emptyList(),
 )
+
+/** One day's listening total, in milliseconds. */
+@Serializable
+data class DayTotal(
+    val day: String = "",
+    val ms: Long = 0,
+)
+
+@Serializable
+data class ListeningResponse(val days: List<DayTotal> = emptyList())

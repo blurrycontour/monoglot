@@ -5,9 +5,9 @@ import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
+import androidx.room.PrimaryKey
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
-import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -44,6 +44,42 @@ data class ProgressEntity(
     /** False until the position has been accepted by the server. */
     val synced: Boolean = false,
 )
+
+/**
+ * Time listened on one local day, waiting to reach the server.
+ *
+ * Buffered here rather than posted as it accrues: playing generates a tick ten
+ * times a second, and the server does not need to hear about each one. Cleared
+ * once the server has it.
+ */
+@Entity(tableName = "listening_buffer")
+data class ListeningEntity(
+    @PrimaryKey val day: String,
+    val ms: Long,
+)
+
+@Dao
+interface ListeningDao {
+    @Query("SELECT * FROM listening_buffer")
+    suspend fun all(): List<ListeningEntity>
+
+    @Query("""
+        INSERT INTO listening_buffer (day, ms) VALUES (:day, :ms)
+        ON CONFLICT (day) DO UPDATE SET ms = ms + :ms
+    """)
+    suspend fun add(day: String, ms: Long)
+
+    /** Subtracts what was sent rather than clearing the row: time may have
+     *  accrued between reading the buffer and the server accepting it. */
+    @Query("UPDATE listening_buffer SET ms = ms - :ms WHERE day = :day")
+    suspend fun settle(day: String, ms: Long)
+
+    @Query("DELETE FROM listening_buffer WHERE ms <= 0")
+    suspend fun dropEmpty()
+
+    @Query("DELETE FROM listening_buffer")
+    suspend fun deleteAll()
+}
 
 @Dao
 interface DownloadDao {
@@ -85,13 +121,14 @@ interface ProgressDao {
 }
 
 @Database(
-    entities = [DownloadEntity::class, ProgressEntity::class],
-    version = 1,
+    entities = [DownloadEntity::class, ProgressEntity::class, ListeningEntity::class],
+    version = 2,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun downloads(): DownloadDao
     abstract fun progress(): ProgressDao
+    abstract fun listening(): ListeningDao
 }
 
 /**
@@ -101,12 +138,18 @@ class OfflineStore(private val context: Context) {
 
     private val db: AppDatabase = Room.databaseBuilder(
         context.applicationContext, AppDatabase::class.java, "monoglot.db"
-    ).build()
+    )
+        // The only thing here is a cache and a send buffer: rebuilding it costs
+        // a re-download, never a lost listening position — those are on the
+        // server. Not worth a hand-written migration per schema change.
+        .fallbackToDestructiveMigration()
+        .build()
 
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
     val downloads: DownloadDao get() = db.downloads()
     val progress: ProgressDao get() = db.progress()
+    val listening: ListeningDao get() = db.listening()
 
     fun observeDownloads(): Flow<List<DownloadEntity>> = db.downloads().observeAll()
 

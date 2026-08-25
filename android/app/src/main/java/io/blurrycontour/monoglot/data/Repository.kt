@@ -135,6 +135,38 @@ class Repository(
         runCatching { api.recordLookup(lemma, itemId, tokenId, manual) }
     }
 
+    /**
+     * Banks time spent listening, against the phone's own date.
+     *
+     * The local day, not UTC: a session that ends at 23:55 belongs to the day
+     * it felt like, and this is a record kept for the pleasure of looking at it.
+     */
+    suspend fun addListening(ms: Long) {
+        if (ms <= 0) return
+        val day = java.time.LocalDate.now().toString()
+        offline.listening.add(day, ms)
+    }
+
+    /**
+     * Flushes buffered listening time.
+     *
+     * Settles each day by exactly what was sent rather than clearing the row:
+     * more time may have accrued between reading the buffer and the server
+     * accepting it, and that time is not this flush's to discard.
+     */
+    suspend fun syncListening() {
+        val pending = offline.listening.all().filter { it.ms > 0 }
+        if (pending.isEmpty()) return
+        val sent = pending.map { DayTotal(it.day, it.ms) }
+        runCatching { api.postListening(sent) }.onSuccess {
+            sent.forEach { offline.listening.settle(it.day, it.ms) }
+            offline.listening.dropEmpty()
+        }
+    }
+
+    suspend fun listeningHistory(days: Int = 90): List<DayTotal> =
+        runCatching { api.listening(days) }.getOrDefault(emptyList())
+
     suspend fun episodeSummary(itemId: Int): EpisodeSummary? =
         runCatching { api.itemSummary(itemId) }.getOrNull()
 }

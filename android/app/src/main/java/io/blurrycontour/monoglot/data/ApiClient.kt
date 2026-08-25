@@ -151,6 +151,19 @@ class ApiClient(private val settings: SettingsStore) {
         post("/api/words/delete", body)
     }
 
+    suspend fun listening(days: Int = 90): List<DayTotal> =
+        json.decodeFromString(ListeningResponse.serializer(), get("/api/listening?days=$days")).days
+
+    /** Adds time to the server's daily totals. Additive, so a resend that the
+     *  server already saw would double-count — the buffer settles only what
+     *  the server confirmed. */
+    suspend fun postListening(days: List<DayTotal>) {
+        val payload = days.joinToString(",") {
+            """{"day":${jsonString(it.day)},"ms":${it.ms}}"""
+        }
+        post("/api/listening", """{"days":[$payload]}""")
+    }
+
     suspend fun system(): SystemInfo =
         json.decodeFromString(get("/api/system"))
 

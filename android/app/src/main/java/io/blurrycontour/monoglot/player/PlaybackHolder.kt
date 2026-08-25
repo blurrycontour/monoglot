@@ -99,10 +99,18 @@ object PlaybackHolder {
     private fun syncFromController() {
         val c = controller ?: return
         val id = c.currentMediaItem?.mediaId?.toIntOrNull() ?: -1
+        // The metadata is worded for the notification — source as the title,
+        // date beneath it — so reading it back would put the date in the field
+        // the mini player prints the source from, and show the day twice.
+        // prepare() owns these; only an item this object never prepared falls
+        // back to what the session says.
+        val prepared = id == _now.value.itemId
         _now.value = _now.value.copy(
             itemId = id,
-            title = c.mediaMetadata.title?.toString().orEmpty(),
-            source = c.mediaMetadata.artist?.toString().orEmpty(),
+            title = if (prepared) _now.value.title
+                    else c.mediaMetadata.title?.toString().orEmpty(),
+            source = if (prepared) _now.value.source
+                     else c.mediaMetadata.artist?.toString().orEmpty(),
             isPlaying = c.isPlaying,
             durationMs = if (c.duration > 0) c.duration.toInt() else _now.value.durationMs,
             speed = c.playbackParameters.speed,
@@ -122,9 +130,18 @@ object PlaybackHolder {
     private fun startTicker() {
         if (ticker?.isActive == true) return
         ticker = scope.launch {
+            var lastWallMs = System.currentTimeMillis()
             while (true) {
                 val c = controller
                 if (c == null || !c.isPlaying) break
+
+                // Wall time, not position: a rewind costs what it really costs
+                // and a slower speed shows up as the longer sitting it is,
+                // which is the whole point of counting this separately from
+                // how far into an episode you got.
+                val nowWallMs = System.currentTimeMillis()
+                bankListening(nowWallMs - lastWallMs)
+                lastWallMs = nowWallMs
                 val pos = c.currentPosition.toInt()
                 val dur = if (c.duration > 0) c.duration.toInt() else _now.value.durationMs
                 if (pos != _now.value.positionMs || dur != _now.value.durationMs) {
@@ -148,6 +165,7 @@ object PlaybackHolder {
         // Pausing is exactly when the position is worth having exactly right,
         // and it is the last chance before the app may be swiped away.
         flush()
+        flushListening()
     }
 
     /** A single position read, for the transitions the ticker does not cover. */
@@ -199,6 +217,43 @@ object PlaybackHolder {
     /** For "clear progress": the next position is worth writing whatever
      *  bucket it lands in. */
     fun forgetSavedPosition() { lastSavedBucket = -1 }
+
+    // ---- Listening time --------------------------------------------------
+
+    /** Unbanked wall time, held here so a tick does not touch the database
+     *  ten times a second. */
+    private var pendingListenMs = 0L
+
+    /** How much accumulates before it is written down. */
+    private const val LISTEN_BANK_MS = 15_000L
+
+    /**
+     * Adds a tick's worth of wall time.
+     *
+     * A gap longer than a few seconds is not listening: the device slept, or
+     * the process was frozen and resumed. Counting it would turn a phone left
+     * in a pocket into a personal best.
+     */
+    private fun bankListening(deltaMs: Long) {
+        if (deltaMs <= 0 || deltaMs > MAX_TICK_GAP_MS) return
+        pendingListenMs += deltaMs
+        if (pendingListenMs >= LISTEN_BANK_MS) flushListening()
+    }
+
+    private const val MAX_TICK_GAP_MS = 5_000L
+
+    private fun flushListening() {
+        val ms = pendingListenMs
+        if (ms <= 0) return
+        pendingListenMs = 0
+        scope.launch {
+            runCatching {
+                val repo = io.blurrycontour.monoglot.data.Graph.repository
+                repo.addListening(ms)
+                repo.syncListening()
+            }
+        }
+    }
 
     private const val SAVE_BUCKET_MS = 5000
 
@@ -283,11 +338,11 @@ object PlaybackHolder {
                         .setExtras(Bundle().apply {
                             putIntArray(EXTRA_SEGMENT_STARTS, segmentStartsMs)
                         })
-                        // The date, not the headline: every Klartext episode
-                        // shares one title, and the notification is where you
-                        // are least able to work out which one is playing.
-                        .setTitle(notificationTitle(title, publishedAt))
-                        .setArtist(source)
+                        // Source above, date below, the same way round as the
+                        // mini player. Never the episode headline: every
+                        // Klartext episode shares one.
+                        .setTitle(source.ifBlank { title })
+                        .setArtist(notificationTitle(title, publishedAt))
                         // Shown on the lock screen and in the notification.
                         .setArtworkUri(artworkUri(context))
                         .build()
@@ -366,6 +421,7 @@ object PlaybackHolder {
         // position 0, so anything not written by now is gone. Closing the bar
         // must not be the one way to lose a listening session.
         flush()
+        flushListening()
         controller?.run { pause(); clearMediaItems() }
         _now.value = NowPlaying()
         lastSavedBucket = -1
