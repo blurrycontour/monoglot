@@ -79,17 +79,6 @@ class PlaybackService : MediaSessionService() {
             // Five seconds, to match the in-app transport.
             .setSeekBackIncrementMs(5_000)
             .setSeekForwardIncrementMs(5_000)
-            // Holds a wifi lock as well as a wake lock while playing.
-            //
-            // Audio already buffered keeps playing with the screen off, so
-            // playback looked fine — but a seek past the buffer opens a new
-            // ranged request, and by then the radio may have dropped the wifi
-            // association it no longer appeared to need. Against a homelab
-            // server on the LAN that request cannot be served over mobile
-            // data at all: it hung until it timed out, the load failed, and
-            // the session went down with it. WAKE_LOCK is already declared in
-            // the manifest for exactly this and was never used.
-            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
 
         player.addListener(recovery)

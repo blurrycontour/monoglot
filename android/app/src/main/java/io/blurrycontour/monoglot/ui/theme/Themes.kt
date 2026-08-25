@@ -103,8 +103,11 @@ private val Black = AppTheme(
         onSurface = Color(0xFFEDEDF0),
         surfaceVariant = Color(0xFF1E1E26),
         onSurfaceVariant = Color(0xFF9E9EAC),
-        outline = Color(0xFF33333F),
-        outlineVariant = Color(0xFF26262F),
+        // The darkest theme needs the most help: at 1.5 against a near-black
+        // surface an outlined button or text field had no visible edge at all.
+        // 2.1, in line with the other dark themes.
+        outline = Color(0xFF484859),
+        outlineVariant = Color(0xFF33333F),
     ),
 )
 
