@@ -14,6 +14,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
@@ -36,14 +37,13 @@ import io.blurrycontour.monoglot.data.SystemInfo
 import io.blurrycontour.monoglot.ui.util.RefreshWhenVisible
 import io.blurrycontour.monoglot.ui.util.rememberIsForeground
 import io.blurrycontour.monoglot.ui.util.formatBytesShort
+import java.util.Locale
 
 data class SystemState(
     val loading: Boolean = true,
     val info: SystemInfo? = null,
     val bootstrap: BootstrapStatus = BootstrapStatus(),
     val error: String? = null,
-    val offlineBytes: Long = 0,
-    val offlineCount: Int = 0,
     val message: String? = null,
     val busy: Boolean = false,
     val refreshing: Boolean = false,
@@ -71,8 +71,6 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
     fun load() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = _state.value.info == null)
-            val offlineBytes = repo.offline.totalBytes()
-            val offlineCount = repo.offline.downloads.all().size
             runCatching { repo.api.status() }.onSuccess {
                 _state.value = _state.value.copy(bootstrap = it.bootstrap)
                 // A first start runs for minutes. Poll while it does, so the
@@ -84,7 +82,6 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
                 .onSuccess {
                     _state.value = _state.value.copy(
                         loading = false, info = it, error = null,
-                        offlineBytes = offlineBytes, offlineCount = offlineCount,
                     )
                 }
                 .onFailure {
@@ -93,7 +90,6 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
                         // Dropped along with the error: these numbers describe
                         // a server we can no longer reach.
                         info = null,
-                        offlineBytes = offlineBytes, offlineCount = offlineCount,
                     )
                 }
         }
@@ -153,14 +149,6 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun clearDownloads() {
-        viewModelScope.launch {
-            repo.offline.clearAll()
-            _state.value = _state.value.copy(message = "Offline downloads cleared")
-            load()
-        }
-    }
-
     fun triggerIngest() {
         viewModelScope.launch {
             val ok = runCatching { repo.api.triggerIngest() }.isSuccess
@@ -174,6 +162,14 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
     fun clearMessage() { _state.value = _state.value.copy(message = null) }
 }
 
+/**
+ * The server: what it holds, what it is doing, and the actions that act on it.
+ *
+ * Everything belonging to this phone or to the reader — the server address,
+ * appearance, playback defaults, reminders, offline downloads — lives in
+ * Settings instead. One rule, so nothing has to be hunted for across two
+ * screens that look alike.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SystemScreen(visible: Boolean = true) {
@@ -181,6 +177,7 @@ fun SystemScreen(visible: Boolean = true) {
     val state by vm.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     var cleanupDialog by remember { mutableStateOf(false) }
+    val barBehavior = rememberTabBarBehavior()
 
     // Finished counts and container figures both go stale the moment you leave
     // this tab; reload whenever it is the one on screen.
@@ -196,6 +193,7 @@ fun SystemScreen(visible: Boolean = true) {
     }
 
     Scaffold(
+        modifier = Modifier.nestedScroll(barBehavior.nestedScrollConnection),
         // contentColorFor(Transparent) is Unspecified, which leaves
         // LocalContentColor at its black default. Every piece of unstyled text
         // on the screen would otherwise be black regardless of theme.
@@ -205,7 +203,7 @@ fun SystemScreen(visible: Boolean = true) {
         // strip that clipped the last row of content short of the bar.
         contentWindowInsets = WindowInsets(0),
         contentColor = MaterialTheme.colorScheme.onBackground,
-        topBar = { MonoglotTopBar(title = "System") },
+        topBar = { MonoglotTopBar(title = "System", scrollBehavior = barBehavior) },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         if (state.loading) {
@@ -295,16 +293,6 @@ fun SystemScreen(visible: Boolean = true) {
                     }
                 }
 
-                SectionCard("On this phone") {
-                    StatRow("Downloaded episodes", "${state.offlineCount}")
-                    StatRow("Storage used", formatBytesShort(state.offlineBytes))
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedButton(
-                        onClick = { vm.clearDownloads() },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Clear offline downloads") }
-                }
-
                 info?.let { sys ->
                     if (sys.containers.isNotEmpty()) {
                         SectionCard("Containers") {
@@ -327,8 +315,8 @@ fun SystemScreen(visible: Boolean = true) {
                     }
 
                     SectionCard("Dictionary") {
-                        StatRow("Definitions", "%,d".format(sys.lexicon.lexemes))
-                        StatRow("Word forms", "%,d".format(sys.lexicon.forms))
+                        StatRow("Definitions", "%,d".format(Locale.ROOT, sys.lexicon.lexemes))
+                        StatRow("Word forms", "%,d".format(Locale.ROOT, sys.lexicon.forms))
                         sys.languages.forEach {
                             StatRow("Language", "${it.name} (${it.nativeName})")
                         }
@@ -430,48 +418,9 @@ private fun SourceBlock(source: SourceStats) {
     }
 }
 
-@Composable
-private fun SectionCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column {
-        Text(
-            title.uppercase(),
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            letterSpacing = 0.8.sp,
-            modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
-        )
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), content = content)
-        }
-    }
-}
-
-@Composable
-private fun StatRow(label: String, value: String, emphasise: Boolean = false) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.weight(1f))
-        Text(
-            value,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = if (emphasise) FontWeight.SemiBold else FontWeight.Medium,
-            color = if (emphasise) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface,
-        )
-    }
-}
-
 private fun formatHours(ms: Long): String {
     val minutes = ms / 60_000
-    return if (minutes < 60) "$minutes min" else "%d h %02d min".format(minutes / 60, minutes % 60)
+    return if (minutes < 60) "$minutes min" else "%d h %02d min".format(Locale.ROOT, minutes / 60, minutes % 60)
 }
 
 
@@ -499,7 +448,7 @@ private fun ContainerRow(c: ContainerStat) {
             )
             Spacer(Modifier.weight(1f))
             Text(
-                if (running) "%.0f%% CPU · %s".format(c.cpuPercent, formatBytesShort(c.memBytes))
+                if (running) "%.0f%% CPU · %s".format(Locale.ROOT, c.cpuPercent, formatBytesShort(c.memBytes))
                 else c.status.ifBlank { c.state },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

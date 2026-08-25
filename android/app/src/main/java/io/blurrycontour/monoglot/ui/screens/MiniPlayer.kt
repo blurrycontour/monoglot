@@ -31,7 +31,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.blurrycontour.monoglot.player.NowPlaying
 import io.blurrycontour.monoglot.player.PlaybackHolder
+import io.blurrycontour.monoglot.ui.util.Dates
 import io.blurrycontour.monoglot.ui.util.formatDuration
+import java.util.Locale
+
+/** Minimum comfortable touch target. */
+private val MINI_TARGET = 48.dp
 
 /**
  * Persistent mini player, in the manner of Spotify or YouTube: leaving the
@@ -58,7 +63,10 @@ fun MiniPlayer(
         shape = RoundedCornerShape(14.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
     ) {
-        Column {
+        // Clipped to the card's own shape: a square-ended bar drawn across the
+        // top of a 14dp radius escaped both corners and read as a stray tab
+        // stuck to the player rather than part of it.
+        Column(Modifier.clip(RoundedCornerShape(14.dp))) {
             LinearProgressIndicator(
                 progress = { progress },
                 modifier = Modifier.fillMaxWidth().height(3.dp),
@@ -83,8 +91,13 @@ fun MiniPlayer(
                 }
                 Spacer(Modifier.width(11.dp))
                 Column(Modifier.weight(1f)) {
+                    // The date identifies the episode; the title is the same
+                    // every day for the sources this app carries.
+                    val date = Dates.label(Dates.parse(now.publishedAt))
                     Text(
-                        now.title.ifBlank { "Now playing" },
+                        if (date == "—") now.title.ifBlank { "Now playing" }
+                        else listOfNotNull(date, now.source.ifBlank { null })
+                            .joinToString("  ·  "),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -99,20 +112,30 @@ fun MiniPlayer(
                         maxLines = 1,
                     )
                 }
-                IconButton(onClick = { PlaybackHolder.skip(-5000) }) {
+                IconButton(
+                    onClick = { PlaybackHolder.skip(-5000) },
+                    modifier = Modifier.size(MINI_TARGET),
+                ) {
                     Icon(Icons.Default.Replay, "Back 5 seconds", Modifier.size(20.dp))
                 }
+                // 48dp, the smallest target Material considers reliable. These
+                // were 36dp, with Close six of those dp from Play — a miss on
+                // the primary control killed playback outright.
                 FilledIconButton(
                     onClick = { PlaybackHolder.playPause() },
-                    modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(MINI_TARGET),
                 ) {
                     Icon(
                         if (now.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = if (now.isPlaying) "Pause" else "Play",
-                        modifier = Modifier.size(22.dp),
+                        modifier = Modifier.size(24.dp),
                     )
                 }
-                IconButton(onClick = { PlaybackHolder.stop() }) {
+                Spacer(Modifier.width(4.dp))
+                IconButton(
+                    onClick = { PlaybackHolder.stop() },
+                    modifier = Modifier.size(MINI_TARGET),
+                ) {
                     Icon(Icons.Default.Close, "Close player", Modifier.size(18.dp))
                 }
             }
@@ -140,5 +163,5 @@ fun MiniPlayerHost(
 }
 
 fun trimSpeed(speed: Float): String =
-    if (speed == speed.toInt().toFloat()) "${speed.toInt()}" else "%.2f".format(speed).trimEnd('0').trimEnd('.')
+    if (speed == speed.toInt().toFloat()) "${speed.toInt()}" else "%.2f".format(Locale.ROOT, speed).trimEnd('0').trimEnd('.')
 

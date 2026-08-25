@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import io.blurrycontour.monoglot.data.TranscriptMode
 import io.blurrycontour.monoglot.player.PlayerState
 import io.blurrycontour.monoglot.player.PlayerViewModel
+import java.util.Locale
 
 // 0.5x to 2.0x. The old 0.75/0.85/1.0 range was too narrow to hear: 0.85 to
 // 1.0 is a 15% change, right at the threshold of perception for speech.
@@ -303,5 +304,5 @@ private fun Scrubber(state: PlayerState, onSeek: (Int) -> Unit) {
 
 fun formatTime(ms: Int): String {
     val total = ms / 1000
-    return "%d:%02d".format(total / 60, total % 60)
+    return "%d:%02d".format(Locale.ROOT, total / 60, total % 60)
 }

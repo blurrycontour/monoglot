@@ -28,7 +28,10 @@ fun WordSheet(
     onDismiss: () -> Unit,
     onStatus: (String, String) -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // Deliberately not skipPartiallyExpanded: at full height the sheet covered
+    // the very sentence the word was tapped in, so the definition arrived with
+    // its context hidden. Half height leaves the line on screen.
+    val sheetState = rememberModalBottomSheetState()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -112,16 +115,29 @@ fun WordSheet(
                         }
 
                         Spacer(Modifier.height(12.dp))
+                        // Filter chips, not assist chips: this is a state the
+                        // word is already in, and offering both as identical
+                        // buttons gave no way to tell whether a word had been
+                        // filed already. Tapping no longer dismisses either —
+                        // the sheet stays put so the change can be seen, and
+                        // corrected if it was the wrong chip.
+                        val current = popup.statuses[candidate.lemma]
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AssistChip(
-                                onClick = { onStatus(candidate.lemma, "known"); onDismiss() },
+                            FilterChip(
+                                selected = current == "known",
+                                onClick = { onStatus(candidate.lemma, "known") },
                                 label = { Text("Known") },
-                                leadingIcon = { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Check, null, Modifier.size(16.dp))
+                                },
                             )
-                            AssistChip(
-                                onClick = { onStatus(candidate.lemma, "learning"); onDismiss() },
+                            FilterChip(
+                                selected = current == "learning",
+                                onClick = { onStatus(candidate.lemma, "learning") },
                                 label = { Text("Learning") },
-                                leadingIcon = { Icon(Icons.Default.School, null, Modifier.size(16.dp)) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.School, null, Modifier.size(16.dp))
+                                },
                             )
                         }
                         HorizontalDivider(Modifier.padding(top = 14.dp))

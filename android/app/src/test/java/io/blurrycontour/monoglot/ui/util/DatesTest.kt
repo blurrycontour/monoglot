@@ -74,6 +74,29 @@ class DatesTest {
         assertEquals("1 h 05 min", formatDuration(3_900_000))
     }
 
+    /**
+     * The card headline is chosen against its section header. Under "TODAY"
+     * every card used to be headlined "Today", spending the one field that
+     * identifies an episode on a word already printed directly above it.
+     */
+    @Test
+    fun `only day-naming groups make the date redundant`() {
+        assertEquals(true, Dates.groupNamesTheDay("Today"))
+        assertEquals(true, Dates.groupNamesTheDay("Yesterday"))
+        // "THIS WEEK" does not say which day, so "Tuesday" still informs.
+        assertEquals(false, Dates.groupNamesTheDay("This week"))
+        assertEquals(false, Dates.groupNamesTheDay("Earlier"))
+        assertEquals(false, Dates.groupNamesTheDay("Undated"))
+    }
+
+    @Test
+    fun `airtime is rendered in the reader's own zone`() {
+        val utcEvening = OffsetDateTime.of(2026, 8, 23, 18, 55, 0, 0, ZoneOffset.UTC)
+        val zoned = utcEvening.atZoneSameInstant(java.time.ZoneId.systemDefault())
+        assertEquals("%02d:%02d".format(zoned.hour, zoned.minute), Dates.time(utcEvening))
+        assertEquals("", Dates.time(null))
+    }
+
     private fun item(id: Int, published: String?) =
         ItemSummary(id = id, title = "t", publishedAt = published, durationMs = 300_000)
 }

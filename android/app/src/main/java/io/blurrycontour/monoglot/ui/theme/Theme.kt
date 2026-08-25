@@ -13,7 +13,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.Canvas
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -121,21 +125,47 @@ private class Scatter(private var seed: Int) {
 }
 
 /**
- * Background ornament. Low-contrast, because this sits behind a transcript
- * that has to stay readable, but dense enough to actually read as art: list
- * cards are opaque and cover most of the canvas, so a handful of large shapes
- * is nearly invisible in practice.
+ * Background ornament, painted once and kept.
+ *
+ * These are dense by design — the paper grain alone is 2 600 circles and 90
+ * fibres — and they used to be issued from `drawBehind`, which runs on every
+ * draw pass of the root box. That is thousands of primitives per frame behind
+ * a scrolling list, for a background that never changes. Rendering into an
+ * ImageBitmap once per size and blitting that instead costs one full-screen
+ * bitmap and nothing per frame.
  */
 private fun Modifier.themeOrnament(
     theme: AppTheme,
     primary: Color,
     secondary: Color,
-): Modifier = when (theme.ornament) {
+): Modifier {
+    if (theme.ornament == Ornament.NONE) return this
+    return drawWithCache {
+        val bitmap = ImageBitmap(size.width.toInt().coerceAtLeast(1),
+                                 size.height.toInt().coerceAtLeast(1))
+        CanvasDrawScope().draw(this, layoutDirection, Canvas(bitmap), size) {
+            drawOrnament(theme.ornament, primary, secondary)
+        }
+        onDrawBehind { drawImage(bitmap) }
+    }
+}
 
-    Ornament.NONE -> this
+/**
+ * Low-contrast, because this sits behind a transcript that has to stay
+ * readable, but dense enough to actually read as art: list cards are opaque and
+ * cover most of the canvas, so a handful of large shapes is nearly invisible in
+ * practice.
+ */
+private fun DrawScope.drawOrnament(
+    ornament: Ornament,
+    primary: Color,
+    secondary: Color,
+): Unit = when (ornament) {
+
+    Ornament.NONE -> Unit
 
     // Fine speckle, like paper stock.
-    Ornament.PAPER_GRAIN -> drawBehind {
+    Ornament.PAPER_GRAIN -> {
         val ink = Color(0xFF6B5B3E)
         val rng = Scatter(12345)
         repeat(2600) {
@@ -162,7 +192,7 @@ private fun Modifier.themeOrnament(
     }
 
     // Soft colour wash bleeding in from the top-left.
-    Ornament.SOFT_WASH -> drawBehind {
+    Ornament.SOFT_WASH -> {
         drawRect(
             brush = Brush.radialGradient(
                 colors = listOf(primary.copy(alpha = 0.14f), Color.Transparent),
@@ -190,7 +220,7 @@ private fun Modifier.themeOrnament(
     }
 
     // Two overlapping bands, loosely northern-lights shaped.
-    Ornament.AURORA -> drawBehind {
+    Ornament.AURORA -> {
         drawRect(
             brush = Brush.linearGradient(
                 colors = listOf(
@@ -270,7 +300,7 @@ private fun Modifier.themeOrnament(
     }
 
     // Forest floor: soft canopy shapes with a dense scatter of leaves.
-    Ornament.BLOBS -> drawBehind {
+    Ornament.BLOBS -> {
         drawCircle(
             primary.copy(alpha = 0.06f),
             radius = size.width * 0.55f,
@@ -312,7 +342,7 @@ private fun Modifier.themeOrnament(
     }
 
     // Comic book: halftone dots plus a few speed-line bursts.
-    Ornament.HALFTONE -> drawBehind {
+    Ornament.HALFTONE -> {
         val step = 26f
         var y = 0f
         var row = 0
@@ -345,7 +375,7 @@ private fun Modifier.themeOrnament(
     }
 
     // Editorial hairline rules, like a ruled notebook seen at low contrast.
-    Ornament.RULES -> drawBehind {
+    Ornament.RULES -> {
         var y = size.height * 0.06f
         while (y < size.height) {
             drawLine(

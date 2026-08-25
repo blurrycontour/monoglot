@@ -25,6 +25,7 @@ import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.WindowInsets
@@ -97,6 +98,9 @@ data class LibraryState(
     val cancellingIds: Set<Int> = emptySet(),
     /** Whether the current source has any never-fetched items at all. */
     val hasArchive: Boolean = false,
+    /** Episodes published after this instant are marked new. Captured once per
+     *  launch, from when the Listen tab was last opened. */
+    val newSince: Long = 0,
 )
 
 /** How long the pull-to-refresh indicator stays up at minimum. A LAN round
@@ -119,12 +123,16 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private var pollJob: Job? = null
 
     init {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(newSince = repo.settings.takeListenSeenAt())
+        }
         refresh(initial = true)
         // Everything held here belongs to one server; start over when it
         // changes rather than showing the old instance's data.
         viewModelScope.launch {
             repo.settings.serverEpochFlow.drop(1).collect {
-                _state.value = LibraryState()
+                // The cutoff belongs to the reader, not the server.
+                _state.value = LibraryState(newSince = _state.value.newSince)
                 refresh(initial = true)
             }
         }
@@ -473,6 +481,7 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
     val state by vm.state.collectAsState()
     val haptics = LocalHapticFeedback.current
     val pullState = rememberPullToRefreshState()
+    val barBehavior = rememberTabBarBehavior()
 
     // Returning from the player must show the progress just made, without
     // requiring a manual pull to refresh.
@@ -491,8 +500,9 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
     var confirmClear by remember { mutableStateOf<ItemSummary?>(null) }
 
     Scaffold(
+        modifier = Modifier.nestedScroll(barBehavior.nestedScrollConnection),
         topBar = {
-            MonoglotTopBar(title = "Listen") {
+            MonoglotTopBar(title = "Listen", scrollBehavior = barBehavior) {
                 BadgedBox(
                     badge = {
                         if (state.filter != LibraryFilter.ALL) Badge(Modifier.size(7.dp))
@@ -528,8 +538,10 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
                 state = pullState,
                 modifier = Modifier.fillMaxSize(),
             ) {
-            val visible = vm.visible(state)
-            LaunchedEffect(state.filter) { /* re-compose on filter change */ }
+            // Named for what it is: `visible` here used to shadow the
+            // screen's own `visible` parameter, which means something else
+            // entirely.
+            val shown = vm.visible(state)
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -550,18 +562,21 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
                 when {
                     state.loading -> items(5) { SkeletonCard() }
 
-                    state.error != null && visible.isEmpty() -> item {
+                    state.error != null && shown.isEmpty() -> item {
                         ServerErrorState(state.error!!, onRetry = { vm.refresh() })
                     }
 
-                    visible.isEmpty() -> item { EmptyState(state.filter) }
+                    shown.isEmpty() -> item { EmptyState(state.filter) }
 
                     else -> {
-                        Dates.groupItems(visible).forEach { (header, groupItems) ->
+                        Dates.groupItems(shown).forEach { (header, groupItems) ->
                             stickyHeader(key = "h-$header") { SectionHeader(header, groupItems.size) }
                             items(groupItems, key = { it.id }) { item ->
                                 EpisodeCard(
                                     item = item,
+                                    group = header,
+                                    sourceFiltered = state.sourceFilter != null,
+                                    isNew = isNew(item, state.newSince),
                                     downloaded = item.id in state.downloadedIds,
                                     busy = item.id in state.busyIds,
                                     nowPlaying = item.id == nowPlaying.itemId,
@@ -776,12 +791,21 @@ private fun SectionHeader(title: String, count: Int) {
 }
 
 /**
- * One episode. The date is the loudest element because Klartext titles are all
- * identical: the only way to tell episodes apart at a glance is when they aired.
+ * One episode.
+ *
+ * The identifying field is the loudest element, because Klartext titles are all
+ * identical. Which field that is depends on the section: under "TODAY" the date
+ * is already established by the header, and every card headlined "Today" told
+ * the reader nothing — there the source is what separates them, since a source
+ * publishes at most once a day. Elsewhere the date is the discriminator and
+ * leads, as before.
  */
 @Composable
 private fun EpisodeCard(
     item: ItemSummary,
+    group: String,
+    sourceFiltered: Boolean,
+    isNew: Boolean,
     downloaded: Boolean,
     busy: Boolean,
     nowPlaying: Boolean,
@@ -813,15 +837,33 @@ private fun EpisodeCard(
             BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
         } else null,
     ) {
+        val published = Dates.parse(item.publishedAt)
+        val source = item.sourceName.ifBlank { item.sourceSlug }
+        // Under a header that already names the day, the day is not worth
+        // saying again: the source is what tells one of today's episodes from
+        // another. Everywhere else the date is still the discriminator.
+        // Only worth doing when the list mixes sources. Filtered to one
+        // source there is a single episode per day, so the source names
+        // nothing the chip above has not already said, and the date goes back
+        // to leading.
+        val dayIsKnown = Dates.groupNamesTheDay(group) && !sourceFiltered
+        val headline = if (dayIsKnown) source else Dates.label(published)
+        val airtime = Dates.time(published)
+
         Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 10.dp)) {
             Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
-                    // Date first and largest. This is the identifying field.
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (dayIsKnown) {
+                            SourceDot(item.sourceSlug)
+                            Spacer(Modifier.width(8.dp))
+                        }
                         Text(
-                            Dates.label(Dates.parse(item.publishedAt)),
+                            headline,
                             fontSize = 19.sp,
                             fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             color = if (item.completed)
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             else MaterialTheme.colorScheme.onSurface,
@@ -835,18 +877,30 @@ private fun EpisodeCard(
                                 tint = MaterialTheme.colorScheme.primary,
                             )
                         }
+                        if (isNew) {
+                            Spacer(Modifier.width(8.dp))
+                            NewBadge()
+                        }
                     }
                     Spacer(Modifier.height(3.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        SourceDot(item.sourceSlug)
-                        Spacer(Modifier.width(6.dp))
+                        if (!dayIsKnown) {
+                            SourceDot(item.sourceSlug)
+                            Spacer(Modifier.width(6.dp))
+                        }
                         Text(
-                            item.sourceName.ifBlank { item.sourceSlug },
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            "  ·  ${formatDuration(item.durationMs)}",
+                            buildList {
+                                // The source has moved up into the headline
+                                // when the day is known; the airtime takes its
+                                // place, and separates two of today's episodes
+                                // from the same source if there ever are any.
+                                if (dayIsKnown) {
+                                    if (airtime.isNotEmpty()) add(airtime)
+                                } else {
+                                    add(source)
+                                }
+                                add(formatDuration(item.durationMs))
+                            }.joinToString("  ·  "),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -924,6 +978,36 @@ private fun EpisodeCard(
     }
 }
 
+/**
+ * Whether an episode arrived since the Listen tab was last opened.
+ *
+ * Something already started is never new, whatever its date: the mark answers
+ * "what showed up while I was away", and an episode you are part-way through
+ * is not that.
+ */
+private fun isNew(item: ItemSummary, since: Long): Boolean {
+    if (since <= 0L || item.positionMs > 0 || item.completed) return false
+    val published = Dates.parse(item.publishedAt) ?: return false
+    return published.toInstant().toEpochMilli() > since
+}
+
+@Composable
+private fun NewBadge() {
+    Surface(
+        color = MaterialTheme.colorScheme.primary,
+        shape = RoundedCornerShape(4.dp),
+    ) {
+        Text(
+            "NEW",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.6.sp,
+            color = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+        )
+    }
+}
+
 /** Sources are colour-coded so the eye can separate them without reading. */
 @Composable
 private fun SourceDot(slug: String) {
@@ -933,54 +1017,6 @@ private fun SourceDot(slug: String) {
         else -> MaterialTheme.colorScheme.outline
     }
     Box(Modifier.size(7.dp).clip(CircleShape).background(color))
-}
-
-/**
- * Offline download. Previously an unlabelled arrow, which gave no clue what it
- * did; now it states its purpose and confirms the result.
- */
-@Composable
-private fun DownloadButton(downloaded: Boolean, busy: Boolean, onClick: () -> Unit) {
-    val label = when {
-        busy -> "Saving"
-        downloaded -> "Offline"
-        else -> "Save"
-    }
-    Surface(
-        onClick = onClick,
-        enabled = !busy,
-        shape = RoundedCornerShape(20.dp),
-        color = if (downloaded) MaterialTheme.colorScheme.primaryContainer
-                else Color.Transparent,
-        border = if (downloaded) null
-                 else androidx.compose.foundation.BorderStroke(
-                     1.dp, MaterialTheme.colorScheme.outline),
-        modifier = Modifier.height(32.dp),
-    ) {
-        Row(
-            Modifier.padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (busy) {
-                CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 2.dp)
-            } else {
-                Icon(
-                    if (downloaded) Icons.Default.OfflinePin else Icons.Default.Download,
-                    contentDescription = null,
-                    modifier = Modifier.size(15.dp),
-                    tint = if (downloaded) MaterialTheme.colorScheme.onPrimaryContainer
-                           else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.width(5.dp))
-            Text(
-                label,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (downloaded) MaterialTheme.colorScheme.onPrimaryContainer
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
 }
 
 /**
@@ -1349,15 +1385,15 @@ private fun QueueSheet(
                     // Cancelling puts the episode back in the archive: it is
                     // not lost, and Show more will fetch it again.
                     if (item.id in busy) {
-                        // Same 36dp box the button occupies, or the spinner
-                        // lands somewhere the button never was.
-                        Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                        // Same box the button occupies, or the spinner lands
+                        // somewhere the button never was.
+                        Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                         }
                     } else {
                         IconButton(
                             onClick = { onCancel(item.id) },
-                            modifier = Modifier.size(36.dp),
+                            modifier = Modifier.size(48.dp),
                         ) {
                             Icon(
                                 Icons.Default.Close,

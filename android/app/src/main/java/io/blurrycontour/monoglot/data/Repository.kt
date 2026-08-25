@@ -126,8 +126,13 @@ class Repository(
      * dictionary had failed to inline it — the opposite of the intent.
      * Best-effort: a failure here must never disturb playback.
      */
-    suspend fun recordLookup(lemma: String, itemId: Int?, tokenId: Int?) {
-        runCatching { api.recordLookup(lemma, itemId, tokenId) }
+    suspend fun recordLookup(
+        lemma: String,
+        itemId: Int?,
+        tokenId: Int?,
+        manual: Boolean = false,
+    ) {
+        runCatching { api.recordLookup(lemma, itemId, tokenId, manual) }
     }
 
     suspend fun episodeSummary(itemId: Int): EpisodeSummary? =

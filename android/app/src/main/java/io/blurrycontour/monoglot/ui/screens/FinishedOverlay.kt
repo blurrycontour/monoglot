@@ -96,8 +96,22 @@ fun FinishedOverlay(
                             .padding(horizontal = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
+                        // Not AssistChips: those ripple under a finger and go
+                        // nowhere. These are a readout, so they are drawn as
+                        // one rather than dressed up as controls.
                         summary.words.take(12).forEach { word ->
-                            AssistChip(onClick = {}, label = { Text(word) })
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                            ) {
+                                Text(
+                                    word,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(
+                                        horizontal = 12.dp, vertical = 7.dp),
+                                )
+                            }
                         }
                     }
                     if (summary.words.size > 12) {

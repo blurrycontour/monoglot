@@ -87,6 +87,8 @@ data class WordRow(
     @SerialName("lookup_count") val lookupCount: Int = 0,
     @SerialName("last_seen") val lastSeen: String = "",
     val definitions: List<Definition> = emptyList(),
+    /** Typed into the Words screen rather than met in an episode. */
+    @SerialName("added_manually") val addedManually: Boolean = false,
 )
 
 @Serializable

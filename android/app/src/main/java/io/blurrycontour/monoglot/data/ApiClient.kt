@@ -92,11 +92,17 @@ class ApiClient(private val settings: SettingsStore) {
      * resolves locally, which meant only words the dictionary was missing ever
      * reached the word list.
      */
-    suspend fun recordLookup(lemma: String, itemId: Int?, tokenId: Int?) {
+    suspend fun recordLookup(
+        lemma: String,
+        itemId: Int?,
+        tokenId: Int?,
+        manual: Boolean = false,
+    ) {
         val body = buildString {
             append("""{"lemma":${jsonString(lemma)}""")
             if (itemId != null) append(""","item_id":$itemId""")
             if (tokenId != null) append(""","token_id":$tokenId""")
+            if (manual) append(""","manual":true""")
             append("}")
         }
         post("/api/lookup/record", body)

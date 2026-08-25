@@ -5,8 +5,11 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -22,6 +25,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -33,6 +38,7 @@ import io.blurrycontour.monoglot.data.Token
 import io.blurrycontour.monoglot.data.TranscriptMode
 import io.blurrycontour.monoglot.player.PlayerViewModel
 import io.blurrycontour.monoglot.ui.theme.TranscriptStyle
+import io.blurrycontour.monoglot.ui.util.Dates
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,12 +60,19 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = {
+                    // Date first, as in the library: every Klartext episode
+                    // carries the same headline, so titling the screen with it
+                    // says only which podcast this is, never which episode.
+                    val item = state.bundle?.item
+                    val published = Dates.parse(item?.publishedAt)
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                state.bundle?.item?.title ?: "Loading…",
+                                if (item == null) "Loading…"
+                                else Dates.label(published),
                                 maxLines = 1,
                                 style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.weight(1f, fill = false),
                             )
                             // The library marks finished episodes; opening one
@@ -74,9 +87,16 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                                 )
                             }
                         }
-                        state.bundle?.item?.sourceName?.let {
-                            Text(it, style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        item?.let {
+                            Text(
+                                listOfNotNull(
+                                    it.sourceName.ifBlank { null },
+                                    Dates.time(published).ifBlank { null },
+                                ).joinToString("  ·  "),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
                         }
                     }
                 },
@@ -260,44 +280,88 @@ private fun RevealView(vm: PlayerViewModel, state: io.blurrycontour.monoglot.pla
 }
 
 /** Whole transcript, current word highlighted. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FullView(vm: PlayerViewModel, state: io.blurrycontour.monoglot.player.PlayerState) {
     val idx = vm.tokenIndex() ?: return
     val listState = rememberLazyListState()
     val activeSeg = state.activeSegmentIdx
+    val haptics = LocalHapticFeedback.current
 
-    // Keep the sentence being spoken on screen without fighting the user:
-    // only auto-scroll when the active sentence changes.
-    LaunchedEffect(activeSeg) {
-        if (activeSeg >= 0) {
-            listState.animateScrollToItem(activeSeg.coerceAtMost(idx.segments.lastIndex.coerceAtLeast(0)))
+    // Auto-scroll yields to the reader.
+    //
+    // It used to follow the audio unconditionally, so scrolling back to
+    // re-read a sentence was undone within seconds — by the one feature that
+    // was supposed to help. A deliberate scroll turns following off; the pill
+    // below turns it back on.
+    var following by remember { mutableStateOf(true) }
+    // Drag interactions specifically, not isScrollInProgress: that is equally
+    // true of the auto-scroll below, which would then switch itself off the
+    // first time it ran.
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) following = false
+        }
+    }
+    LaunchedEffect(activeSeg, following) {
+        if (following && activeSeg >= 0) {
+            listState.animateScrollToItem(
+                activeSeg.coerceAtMost(idx.segments.lastIndex.coerceAtLeast(0)))
         }
     }
 
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        itemsIndexed(idx.segments) { i, seg ->
-            val isActive = i == activeSeg
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(
-                        if (isActive) MaterialTheme.colorScheme.surfaceVariant
-                        else Color.Transparent
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            itemsIndexed(idx.segments) { i, seg ->
+                val isActive = i == activeSeg
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            if (isActive) MaterialTheme.colorScheme.surfaceVariant
+                            else Color.Transparent
+                        )
+                        // Long-press to hear this sentence. The core loop is
+                        // listen, fail, read, re-listen, and until now the last
+                        // step only worked for the line already playing: a
+                        // sentence you could see and had just decoded was not
+                        // something you could ask to hear again.
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                following = true
+                                vm.seekTo(seg.startMs)
+                            },
+                        )
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    SentenceText(
+                        tokens = idx.tokensInSegment(i),
+                        activeTokenId = idx.tokens.getOrNull(state.activeTokenIdx)?.id,
+                        onWordTap = { vm.onWordTapped(it) },
+                        dimmed = !isActive,
                     )
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
-            ) {
-                SentenceText(
-                    tokens = idx.tokensInSegment(i),
-                    activeTokenId = idx.tokens.getOrNull(state.activeTokenIdx)?.id,
-                    onWordTap = { vm.onWordTapped(it) },
-                    dimmed = !isActive,
-                )
+                }
+            }
+        }
+
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !following,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+        ) {
+            FilledTonalButton(onClick = { following = true }) {
+                Icon(Icons.Default.VerticalAlignCenter, null, Modifier.size(17.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Jump to current line")
             }
         }
     }

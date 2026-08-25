@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -41,6 +42,7 @@ import io.blurrycontour.monoglot.ui.theme.ALL_THEMES
 import io.blurrycontour.monoglot.ui.theme.AppTheme
 import io.blurrycontour.monoglot.ui.theme.themeById
 import io.blurrycontour.monoglot.ui.util.RefreshWhenVisible
+import io.blurrycontour.monoglot.ui.util.formatBytesShort
 
 data class SettingsState(
     val serverUrl: String = "",
@@ -48,10 +50,10 @@ data class SettingsState(
     val speed: Float = 1.0f,
     val transcriptMode: TranscriptMode = TranscriptMode.HIDDEN,
     val sources: List<SourceRow> = emptyList(),
-    val storageBytes: Long = 0,
-    val downloadCount: Int = 0,
     val message: String? = null,
     val connection: Connection = Connection.UNKNOWN,
+    val offlineBytes: Long = 0,
+    val offlineCount: Int = 0,
 )
 
 /** Result of the last connection test, shown on the button itself: a snackbar
@@ -72,8 +74,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 authToken = repo.settings.authToken(),
                 speed = repo.settings.speedFlow.first(),
                 transcriptMode = repo.settings.transcriptModeFlow.first(),
-                storageBytes = repo.offline.totalBytes(),
-                downloadCount = repo.offline.downloads.all().size,
+                offlineBytes = repo.offline.totalBytes(),
+                offlineCount = repo.offline.downloads.all().size,
             )
             runCatching { repo.api.sources() }.onSuccess {
                 _state.value = _state.value.copy(sources = it)
@@ -127,19 +129,11 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun triggerIngest() {
-        viewModelScope.launch {
-            val result = runCatching { repo.api.triggerIngest() }
-            _state.value = _state.value.copy(
-                message = if (result.isSuccess) "Ingestion started" else "Could not start ingestion"
-            )
-        }
-    }
-
+    /** Downloaded audio lives on this phone, so it is this screen's to clear. */
     fun clearDownloads() {
         viewModelScope.launch {
             repo.offline.clearAll()
-            _state.value = _state.value.copy(message = "Downloads cleared")
+            _state.value = _state.value.copy(message = "Offline downloads cleared")
             load()
         }
     }
@@ -159,6 +153,7 @@ fun SettingsScreen(visible: Boolean = true) {
     val vm: SettingsViewModel = viewModel()
     val state by vm.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
+    val barBehavior = rememberTabBarBehavior()
 
     var url by remember(state.serverUrl) { mutableStateOf(state.serverUrl) }
     var token by remember(state.authToken) { mutableStateOf(state.authToken) }
@@ -172,6 +167,7 @@ fun SettingsScreen(visible: Boolean = true) {
     }
 
     Scaffold(
+        modifier = Modifier.nestedScroll(barBehavior.nestedScrollConnection),
         // contentColorFor(Transparent) is Unspecified, which leaves
         // LocalContentColor at its black default. Every piece of unstyled text
         // on the screen would otherwise be black regardless of theme.
@@ -182,7 +178,7 @@ fun SettingsScreen(visible: Boolean = true) {
         contentWindowInsets = WindowInsets(0),
         contentColor = MaterialTheme.colorScheme.onBackground,
         topBar = {
-            MonoglotTopBar(title = "Settings")
+            MonoglotTopBar(title = "Settings", scrollBehavior = barBehavior)
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
@@ -194,109 +190,118 @@ fun SettingsScreen(visible: Boolean = true) {
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            SectionTitle("Server")
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it },
-                label = { Text("Server URL") },
-                placeholder = { Text("http://192.168.1.10:8080") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it },
-                label = { Text("Auth token") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Button(
-                onClick = { vm.saveServer(url, token) },
-                enabled = state.connection != Connection.TESTING,
-                modifier = Modifier.fillMaxWidth(),
-                colors = when (state.connection) {
-                    Connection.OK -> ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                    )
-                    Connection.FAILED -> ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                    else -> ButtonDefaults.buttonColors()
-                },
-            ) {
-                when (state.connection) {
-                    Connection.TESTING -> {
-                        CircularProgressIndicator(
-                            Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = LocalContentColor.current,
+            SectionCard("Server") {
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("Server URL") },
+                    placeholder = { Text("http://192.168.1.10:8080") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    label = { Text("Auth token") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = { vm.saveServer(url, token) },
+                    enabled = state.connection != Connection.TESTING,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = when (state.connection) {
+                        Connection.OK -> ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
                         )
-                        Spacer(Modifier.width(10.dp))
-                        Text("Testing…")
+                        Connection.FAILED -> ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        else -> ButtonDefaults.buttonColors()
+                    },
+                ) {
+                    when (state.connection) {
+                        Connection.TESTING -> {
+                            CircularProgressIndicator(
+                                Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = LocalContentColor.current,
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text("Testing…")
+                        }
+                        Connection.OK -> {
+                            Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Connected")
+                        }
+                        Connection.FAILED -> {
+                            Icon(Icons.Default.ErrorOutline, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("No response — check the address")
+                        }
+                        Connection.UNKNOWN -> Text("Save and test connection")
                     }
-                    Connection.OK -> {
-                        Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Connected")
-                    }
-                    Connection.FAILED -> {
-                        Icon(Icons.Default.ErrorOutline, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("No response — check the address")
-                    }
-                    Connection.UNKNOWN -> Text("Save and test connection")
                 }
             }
 
-            HorizontalDivider()
-            SectionTitle("Appearance")
-            ThemePicker()
+            SectionCard("Appearance") { ThemePicker() }
 
-            HorizontalDivider()
-            SectionTitle("Reminders")
-            RemindersSection()
-
-            HorizontalDivider()
-            SectionTitle("App updates")
-            UpdateSection()
-
-            HorizontalDivider()
-            SectionTitle("Playback")
-            Text("Default speed", style = MaterialTheme.typography.bodyMedium)
-            val speeds = listOf(0.5f, 0.75f, 0.85f, 1.0f, 1.25f, 1.5f, 2.0f)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(speeds.size) { i ->
-                    val sp = speeds[i]
-                    FilterChip(
-                        selected = kotlin.math.abs(state.speed - sp) < 0.01f,
-                        onClick = { vm.setSpeed(sp) },
-                        label = { Text("${trimSpeed(sp)}×") },
-                    )
+            SectionCard("Playback") {
+                Text("Default speed", style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(8.dp))
+                val speeds = listOf(0.5f, 0.75f, 0.85f, 1.0f, 1.25f, 1.5f, 2.0f)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(speeds.size) { i ->
+                        val sp = speeds[i]
+                        FilterChip(
+                            selected = kotlin.math.abs(state.speed - sp) < 0.01f,
+                            onClick = { vm.setSpeed(sp) },
+                            label = { Text("${trimSpeed(sp)}×") },
+                        )
+                    }
                 }
+
+                Spacer(Modifier.height(14.dp))
+                Text("Default transcript mode", style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(8.dp))
+                SingleChoiceSegmentedButtonRow {
+                    TranscriptMode.entries.forEachIndexed { i, m ->
+                        SegmentedButton(
+                            selected = state.transcriptMode == m,
+                            onClick = { vm.setMode(m) },
+                            shape = SegmentedButtonDefaults.itemShape(i, TranscriptMode.entries.size),
+                        ) { Text(m.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Hidden is the default on purpose: the app works by making you listen first.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
-            Text("Default transcript mode", style = MaterialTheme.typography.bodyMedium)
-            SingleChoiceSegmentedButtonRow {
-                TranscriptMode.entries.forEachIndexed { i, m ->
-                    SegmentedButton(
-                        selected = state.transcriptMode == m,
-                        onClick = { vm.setMode(m) },
-                        shape = SegmentedButtonDefaults.itemShape(i, TranscriptMode.entries.size),
-                    ) { Text(m.name.lowercase().replaceFirstChar { it.uppercase() }) }
-                }
+            // Downloaded audio is on this phone, so it is configured here
+            // rather than under System, which reports on the server.
+            SectionCard("On this phone") {
+                StatRow("Downloaded episodes", "${state.offlineCount}")
+                StatRow("Storage used", formatBytesShort(state.offlineBytes))
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = { vm.clearDownloads() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Clear offline downloads") }
             }
-            Text(
-                "Hidden is the default on purpose: the app works by making you listen first.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
 
-            // Sources, storage and ingestion live on the System screen, which is
-            // where the numbers that justify those actions already are.
+            SectionCard("Reminders") { RemindersSection() }
 
-            HorizontalDivider()
+            SectionCard("App updates") { UpdateSection() }
+
             AboutSection()
             Spacer(Modifier.height(24.dp))
         }
@@ -488,11 +493,4 @@ private fun Attribution(title: String, body: String) {
         Text(body, style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-}
-
-fun formatBytes(bytes: Long): String = when {
-    bytes >= 1_000_000_000 -> "%.1f GB".format(bytes / 1e9)
-    bytes >= 1_000_000 -> "%.0f MB".format(bytes / 1e6)
-    bytes >= 1_000 -> "%.0f kB".format(bytes / 1e3)
-    else -> "$bytes B"
 }

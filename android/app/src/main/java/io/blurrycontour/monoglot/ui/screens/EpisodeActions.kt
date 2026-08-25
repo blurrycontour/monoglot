@@ -64,7 +64,10 @@ fun EpisodeActionsMenu(
             }
             HorizontalDivider()
             DropdownMenuItem(
-                text = { Text("Free up server space") },
+                // Named for what it does to this episode. "Free up server
+                // space" is the System screen's bulk action, and reading the
+                // same words here suggested this one did the same thing.
+                text = { Text("Remove from server") },
                 leadingIcon = { Icon(Icons.Default.DeleteSweep, null) },
                 onClick = { open = false; onArchive() },
             )

@@ -4,8 +4,10 @@ import io.blurrycontour.monoglot.data.ItemSummary
 import java.time.Duration
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import java.util.Locale
 
 /**
  * Klartext episodes all share one title, so the date is the only thing that
@@ -17,6 +19,7 @@ object Dates {
     private val dayMonth = DateTimeFormatter.ofPattern("d MMM")
     private val dayMonthYear = DateTimeFormatter.ofPattern("d MMM yyyy")
     private val weekday = DateTimeFormatter.ofPattern("EEEE")
+    private val clock = DateTimeFormatter.ofPattern("HH:mm")
 
     fun parse(iso: String?): OffsetDateTime? =
         iso?.let { runCatching { OffsetDateTime.parse(it) }.getOrNull() }
@@ -56,6 +59,21 @@ object Dates {
     }
 
     /**
+     * Whether a section header already states which day its items are from.
+     *
+     * "TODAY" does; "THIS WEEK" does not. Inside a group that does, repeating
+     * the day on every card says nothing — it was the loudest thing on the
+     * card and the one field that identified it, spent on a word the reader
+     * has just read in the header above.
+     */
+    fun groupNamesTheDay(group: String): Boolean =
+        group == "Today" || group == "Yesterday"
+
+    /** Time of day the episode aired, in the reader's own zone. */
+    fun time(published: OffsetDateTime?): String =
+        published?.atZoneSameInstant(ZoneId.systemDefault())?.format(clock) ?: ""
+
+    /**
      * Groups items into ordered sections, preserving the incoming order.
      *
      * [today] is injectable so the grouping can be tested against fixed dates:
@@ -79,9 +97,9 @@ fun formatDuration(ms: Int): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return if (minutes >= 60) {
-        "%d h %02d min".format(minutes / 60, minutes % 60)
+        "%d h %02d min".format(Locale.ROOT, minutes / 60, minutes % 60)
     } else {
-        "%d:%02d".format(minutes, seconds)
+        "%d:%02d".format(Locale.ROOT, minutes, seconds)
     }
 }
 
@@ -99,8 +117,8 @@ fun remainingLabel(positionMs: Int, durationMs: Int): String? {
 }
 
 fun formatBytesShort(bytes: Long): String = when {
-    bytes >= 1_000_000_000 -> "%.1f GB".format(bytes / 1e9)
-    bytes >= 1_000_000 -> "%.0f MB".format(bytes / 1e6)
-    bytes >= 1_000 -> "%.0f kB".format(bytes / 1e3)
+    bytes >= 1_000_000_000 -> "%.1f GB".format(Locale.ROOT, bytes / 1e9)
+    bytes >= 1_000_000 -> "%.0f MB".format(Locale.ROOT, bytes / 1e6)
+    bytes >= 1_000 -> "%.0f kB".format(Locale.ROOT, bytes / 1e3)
     else -> "$bytes B"
 }

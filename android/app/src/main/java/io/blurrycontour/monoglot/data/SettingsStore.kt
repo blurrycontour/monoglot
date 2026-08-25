@@ -44,6 +44,7 @@ class SettingsStore(private val context: Context) {
         val AUTO_UPDATE_CHECK = stringPreferencesKey("auto_update_check")
         val LAST_ITEM = stringPreferencesKey("last_item_id")
         val SERVER_EPOCH = intPreferencesKey("server_epoch")
+        val LISTEN_SEEN_AT = stringPreferencesKey("listen_seen_at")
     }
 
     private val prefs: Flow<Preferences> get() = context.dataStore.data
@@ -117,6 +118,23 @@ class SettingsStore(private val context: Context) {
             if (changed) it[Keys.SERVER_EPOCH] = (it[Keys.SERVER_EPOCH] ?: 0) + 1
         }
         return changed
+    }
+
+    /**
+     * When the Listen tab was last opened, for the "new" markers.
+     *
+     * Read once per launch and immediately replaced: were it re-read every
+     * time the tab came forward, swiping to Words and back would clear every
+     * marker, and glancing at the list would be enough to lose track of what
+     * arrived overnight.
+     */
+    suspend fun takeListenSeenAt(): Long {
+        var previous = 0L
+        context.dataStore.edit {
+            previous = it[Keys.LISTEN_SEEN_AT]?.toLongOrNull() ?: 0L
+            it[Keys.LISTEN_SEEN_AT] = System.currentTimeMillis().toString()
+        }
+        return previous
     }
 
     suspend fun setSpeed(speed: Float) {

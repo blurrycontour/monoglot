@@ -70,7 +70,7 @@ func (s *Server) recordLookup(lang string, itemID, tokenID int, res lexicon.Resu
 	if len(res.Candidates) > 0 {
 		lemma = res.Candidates[0].Lemma
 	}
-	s.recordLemma(lang, itemID, tokenID, lemma)
+	s.recordLemma(lang, itemID, tokenID, lemma, false)
 }
 
 // postRecordLookup logs a tap the client answered by itself.
@@ -85,6 +85,8 @@ func (s *Server) postRecordLookup(w http.ResponseWriter, r *http.Request) {
 		Lemma   string `json:"lemma"`
 		ItemID  int    `json:"item_id"`
 		TokenID int    `json:"token_id"`
+		// Typed into the Words screen rather than tapped in an episode.
+		Manual bool `json:"manual"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		badRequest(w, err.Error())
@@ -95,11 +97,11 @@ func (s *Server) postRecordLookup(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "missing lemma")
 		return
 	}
-	s.recordLemma(langOr(r), body.ItemID, body.TokenID, lemma)
+	s.recordLemma(langOr(r), body.ItemID, body.TokenID, lemma, body.Manual)
 	writeJSON(w, http.StatusOK, map[string]string{"recorded": lemma})
 }
 
-func (s *Server) recordLemma(lang string, itemID, tokenID int, lemma string) {
+func (s *Server) recordLemma(lang string, itemID, tokenID int, lemma string, manual bool) {
 	ctx, cancel := contextWithTimeout(5 * time.Second)
 	defer cancel()
 
@@ -116,12 +118,20 @@ func (s *Server) recordLemma(lang string, itemID, tokenID int, lemma string) {
 		return
 	}
 	// Touch the vocabulary row so the Words screen reflects real usage.
+	manualFlag := 0
+	if manual {
+		manualFlag = 1
+	}
+	// The flag is only ever set, never cleared: a word first typed in and
+	// later met in an episode was still one you went looking for.
 	s.pool.ExecContext(ctx, `
-		INSERT INTO user_words (language_code, lemma, status, lookup_count)
-		VALUES (?, ?, 'learning', 1)
+		INSERT INTO user_words (language_code, lemma, status, lookup_count, added_manually)
+		VALUES (?, ?, 'learning', 1, ?)
 		ON CONFLICT (language_code, lemma) DO UPDATE SET
 		  lookup_count = user_words.lookup_count + 1,
-		  last_seen = strftime('%Y-%m-%d %H:%M:%S','now')`, lang, lemma)
+		  added_manually = MAX(user_words.added_manually, ?),
+		  last_seen = strftime('%Y-%m-%d %H:%M:%S','now')`,
+		lang, lemma, manualFlag, manualFlag)
 }
 
 func (s *Server) postWordStatus(w http.ResponseWriter, r *http.Request) {
@@ -238,12 +248,15 @@ type WordRow struct {
 	FirstSeen   time.Time            `json:"first_seen"`
 	LastSeen    time.Time            `json:"last_seen"`
 	Definitions []lexicon.Definition `json:"definitions,omitempty"`
+	// Typed in rather than met in an episode.
+	AddedManually bool `json:"added_manually"`
 }
 
 func (s *Server) listWords(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	rows, err := s.pool.QueryContext(r.Context(), `
 		SELECT uw.lemma, uw.status, uw.lookup_count, uw.first_seen, uw.last_seen,
+		       uw.added_manually,
 		       COALESCE((SELECT l.definitions FROM lexemes l
 		                 WHERE l.lemma = uw.lemma AND l.language_code = uw.language_code
 		                 ORDER BY l.id LIMIT 1), '[]')
@@ -262,7 +275,7 @@ func (s *Server) listWords(w http.ResponseWriter, r *http.Request) {
 		var raw []byte
 		var first, last db.NullTime
 		if err := rows.Scan(&wr.Lemma, &wr.Status, &wr.LookupCount,
-			&first, &last, &raw); err != nil {
+			&first, &last, &wr.AddedManually, &raw); err != nil {
 			serverError(w, err)
 			return
 		}

@@ -20,6 +20,9 @@ data class WordPopup(
     val token: Token,
     val candidates: List<Candidate>,
     val loading: Boolean = false,
+    /** Current vocabulary status per lemma, so the chips can show which one is
+     *  already true rather than offering both as if neither were. */
+    val statuses: Map<String, String> = emptyMap(),
 )
 
 data class PlayerState(
@@ -53,13 +56,25 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private var index: TokenIndex? = null
     private var itemId: Int = -1
-    private var lastSavedBucket = -1
     private var pausedForPopup = false
 
     /** Whether playback has been somewhere other than the very end since this
      *  episode was opened. Without it, reopening a finished episode resumes at
      *  the end and the summary appears before a single word has played. */
     private var sawBeforeEnd = false
+
+    /** Vocabulary status by lemma. Held for the episode: the word sheet has to
+     *  say what a word already is the instant it opens, and a round trip per
+     *  tap would put the network back in the path this app keeps it out of. */
+    private var statuses: Map<String, String> = emptyMap()
+
+    private fun loadStatuses() {
+        viewModelScope.launch {
+            statuses = runCatching { repo.api.words(null) }
+                .getOrDefault(emptyList())
+                .associate { it.lemma to it.status }
+        }
+    }
 
     /** Retry after a failure: load() short-circuits when the id is unchanged,
      *  which is exactly the case a retry button is for. */
@@ -78,6 +93,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val bundle = repo.bundle(itemId)
                 index = TokenIndex(bundle.tokens, bundle.segments)
+                loadStatuses()
                 val mode = repo.settings.transcriptModeFlow.first()
                 val speed = repo.settings.speedFlow.first()
                 _state.value = _state.value.copy(
@@ -103,6 +119,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                             // last session was offline.
                             resumeMs = maxOf(repo.localProgress(itemId), bundle.item.positionMs),
                             speed = speed,
+                            publishedAt = bundle.item.publishedAt,
                         )
                         PlaybackHolder.observePosition { pos -> updatePosition(pos) }
                     }
@@ -148,15 +165,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
 
-        // Persist roughly every 5 seconds rather than every tick.
-        if (positionMs / 5000 != lastSavedBucket) {
-            lastSavedBucket = positionMs / 5000
-            val dur = _state.value.durationMs
-            viewModelScope.launch {
-                repo.saveProgress(itemId, positionMs,
-                    completed = dur > 0 && positionMs > dur - 5000)
-            }
-        }
+        // Persisting the position is PlaybackHolder's job, not this screen's:
+        // it owns the controller for the life of the process, and this view
+        // model is cleared the moment the player is popped — while the audio
+        // carries on in the mini player, unrecorded.
 
         // Reaching the end used to leave the last sentence frozen on screen,
         // which reads as a stall rather than an ending.
@@ -245,7 +257,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val bundle = _state.value.bundle
         val inline = bundle?.definitions?.get(token.normalized)
         if (!inline.isNullOrEmpty()) {
-            _state.value = _state.value.copy(popup = WordPopup(token, inline))
+            _state.value = _state.value.copy(
+                popup = WordPopup(token, inline, statuses = statusesFor(inline)))
             record(token, inline)
             return
         }
@@ -253,7 +266,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val candidates = repo.lookup(bundle, token.normalized, itemId)
             if (_state.value.popup?.token?.id == token.id) {
-                _state.value = _state.value.copy(popup = WordPopup(token, candidates))
+                _state.value = _state.value.copy(
+                    popup = WordPopup(token, candidates, statuses = statusesFor(candidates)))
             }
             record(token, candidates)
         }
@@ -296,7 +310,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             runCatching { repo.api.resetProgress(id) }
             runCatching { repo.clearLocalProgress(id) }
-            lastSavedBucket = -1
+            PlaybackHolder.forgetSavedPosition()
             sawBeforeEnd = false
             _state.value = _state.value.copy(completed = false)
             seekTo(0)
@@ -316,7 +330,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun statusesFor(candidates: List<Candidate>): Map<String, String> =
+        candidates.mapNotNull { c -> statuses[c.lemma]?.let { c.lemma to it } }.toMap()
+
     fun setWordStatus(lemma: String, status: String) {
+        // Locally first, so the chip reflects the tap immediately and the
+        // sheet can stay open on the word that was just filed.
+        statuses = statuses + (lemma to status)
+        _state.value.popup?.let { popup ->
+            _state.value = _state.value.copy(
+                popup = popup.copy(statuses = popup.statuses + (lemma to status)))
+        }
         viewModelScope.launch { repo.setWordStatus(lemma, status) }
     }
 

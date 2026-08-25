@@ -1,0 +1,12 @@
+-- Which vocabulary entries were typed in rather than met in an episode.
+--
+-- A word added by hand has no episode behind it, so it carries none of the
+-- context the rest of the list does: no sentence it came from, no airing it
+-- belongs to. Worth marking, because it changes what the row means when you
+-- come back to it and cannot place where you saw the word.
+--
+-- Deliberately a column rather than derived from `lookups.item_id IS NULL`.
+-- That FK is ON DELETE SET NULL, so the day anything starts deleting item
+-- rows, every word tapped in a deleted episode would quietly start reading as
+-- hand-added.
+ALTER TABLE user_words ADD COLUMN added_manually INTEGER NOT NULL DEFAULT 0;
