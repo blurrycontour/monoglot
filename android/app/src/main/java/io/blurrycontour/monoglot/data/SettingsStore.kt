@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
@@ -47,18 +48,31 @@ class SettingsStore(private val context: Context) {
 
     private val prefs: Flow<Preferences> get() = context.dataStore.data
 
-    val serverUrlFlow: Flow<String> = prefs.map { it[Keys.SERVER_URL] ?: "" }
-    val authTokenFlow: Flow<String> = prefs.map { it[Keys.AUTH_TOKEN] ?: "" }
-    val speedFlow: Flow<Float> = prefs.map { it[Keys.SPEED] ?: 1.0f }
-    val transcriptModeFlow: Flow<TranscriptMode> = prefs.map {
+    /**
+     * One preference, emitting only when that preference changes.
+     *
+     * DataStore emits the whole Preferences object on every write, and `map`
+     * passes each one through — so writing any key woke every collector of
+     * every other key. That made closing the mini player, which clears the
+     * stored last item, re-emit the server epoch: the Listen, Words and
+     * System screens all treat that as "the server changed", reset to an
+     * empty state and reload. The chips blinked out for a second or two.
+     */
+    private fun <T> pref(read: (Preferences) -> T): Flow<T> =
+        prefs.map(read).distinctUntilChanged()
+
+    val serverUrlFlow: Flow<String> = pref { it[Keys.SERVER_URL] ?: "" }
+    val authTokenFlow: Flow<String> = pref { it[Keys.AUTH_TOKEN] ?: "" }
+    val speedFlow: Flow<Float> = pref { it[Keys.SPEED] ?: 1.0f }
+    val transcriptModeFlow: Flow<TranscriptMode> = pref {
         runCatching { TranscriptMode.valueOf(it[Keys.TRANSCRIPT_MODE] ?: "HIDDEN") }
             .getOrDefault(TranscriptMode.HIDDEN)
     }
 
-    val themeFlow: Flow<String> = prefs.map { it[Keys.THEME] ?: "black" }
-    val accentFlow: Flow<String> = prefs.map { it[Keys.ACCENT] ?: "default" }
-    val libraryFilterFlow: Flow<String> = prefs.map { it[Keys.LIBRARY_FILTER] ?: "all" }
-    val autoUpdateFlow: Flow<Boolean> = prefs.map { (it[Keys.AUTO_UPDATE_CHECK] ?: "true") == "true" }
+    val themeFlow: Flow<String> = pref { it[Keys.THEME] ?: "black" }
+    val accentFlow: Flow<String> = pref { it[Keys.ACCENT] ?: "default" }
+    val libraryFilterFlow: Flow<String> = pref { it[Keys.LIBRARY_FILTER] ?: "all" }
+    val autoUpdateFlow: Flow<Boolean> = pref { (it[Keys.AUTO_UPDATE_CHECK] ?: "true") == "true" }
 
     suspend fun setTheme(id: String) {
         context.dataStore.edit { it[Keys.THEME] = id }
@@ -72,7 +86,7 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit { it[Keys.LIBRARY_FILTER] = id }
     }
 
-    val lastItemFlow: Flow<Int> = prefs.map { it[Keys.LAST_ITEM]?.toIntOrNull() ?: -1 }
+    val lastItemFlow: Flow<Int> = pref { it[Keys.LAST_ITEM]?.toIntOrNull() ?: -1 }
 
     suspend fun setLastItem(id: Int) {
         context.dataStore.edit { it[Keys.LAST_ITEM] = id.toString() }
@@ -92,7 +106,7 @@ class SettingsStore(private val context: Context) {
      * — so screens watch this and start over rather than showing one
      * instance's data under another's address.
      */
-    val serverEpochFlow: Flow<Int> = prefs.map { it[Keys.SERVER_EPOCH] ?: 0 }
+    val serverEpochFlow: Flow<Int> = pref { it[Keys.SERVER_EPOCH] ?: 0 }
 
     /** Returns true if this was a change of server rather than a re-save. */
     suspend fun setServer(url: String, token: String): Boolean {
