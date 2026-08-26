@@ -7,6 +7,7 @@ Speaks float seconds; the Go service converts to integer milliseconds at its
 boundary and stores nothing as a float.
 """
 
+import ctypes
 import gc
 import logging
 import os
@@ -59,8 +60,14 @@ _transcribe_lock = threading.Lock()
 
 
 def get_model() -> WhisperModel:
-    """Load the model once, lazily, on first use."""
-    global _model
+    """Load the model once, lazily, on first use.
+
+    Loading counts as use. /warm otherwise left `_last_used` at zero, so the
+    reaper measured idleness from the epoch and dropped the model on its next
+    pass — warming paid for a load and threw it away 30 seconds later.
+    """
+    global _model, _last_used
+    _last_used = time.time()
     if _model is None:
         with _model_lock:
             if _model is None:
@@ -153,6 +160,7 @@ def health():
         "loaded": _model is not None,
         "idle_unload_seconds": IDLE_UNLOAD_SECONDS,
         "idle_seconds": round(time.time() - _last_used, 1) if _last_used else None,
+        "rss_mb": round(_rss_mb(), 1),
     }
 
 
@@ -261,6 +269,36 @@ def transcribe(req: TranscribeRequest):
     }
 
 
+def _rss_mb() -> float:
+    """Resident set size, so the unload can be checked from the log itself."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except OSError:
+        pass
+    return 0.0
+
+
+def _trim_heap() -> None:
+    """Hand the freed heap back to the operating system.
+
+    Dropping the model frees the weights, but glibc keeps the arenas: the
+    memory is available to this process and to nothing else, so the container
+    stays at the model's high-water mark for the life of the container.
+    Whether the heap shrinks by itself depends on fragmentation and on the
+    arena count, which glibc derives from the core count — the same image
+    returned to 50MB on a container host and held 540MB on a VM. malloc_trim
+    is the explicit ask. On a non-glibc libc there is nothing to call and
+    nothing to do.
+    """
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
+
+
 def _idle_reaper() -> None:
     """Drops the model after a period with no transcriptions."""
     global _model
@@ -278,9 +316,14 @@ def _idle_reaper() -> None:
             if not _transcribe_lock.acquire(blocking=False):
                 continue
             try:
-                log.info("idle for %.0fs, unloading %s", idle, MODEL_NAME)
+                before = _rss_mb()
                 _model = None
                 gc.collect()
+                _trim_heap()
+                log.info(
+                    "idle for %.0fs, unloaded %s (rss %.0f -> %.0f MB)",
+                    idle, MODEL_NAME, before, _rss_mb(),
+                )
             finally:
                 _transcribe_lock.release()
 
