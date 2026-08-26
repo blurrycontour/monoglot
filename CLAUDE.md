@@ -106,3 +106,6 @@ reintroduce language-specific assumptions outside those providers.
 Personal and private. Do not deploy publicly or redistribute cached audio.
 Attribution for Sveriges Radio, 8 Sidor, Folkets lexikon (CC BY-SA 2.5), SALDO
 (CC BY-SA 2.5) and KB-Whisper is required and lives on the Settings screen.
+
+## Deployment
+There is a local dev instance running here, and is rebuilt after chat completions (via Stop hook). Prod instance uses the image built in Github CI.
