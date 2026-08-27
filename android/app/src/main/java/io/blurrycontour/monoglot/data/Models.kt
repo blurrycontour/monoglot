@@ -11,6 +11,8 @@ data class ItemSummary(
     val title: String = "",
     val description: String = "",
     @SerialName("published_at") val publishedAt: String? = null,
+    /** When the server first saw the episode. What "new" is measured from. */
+    @SerialName("discovered_at") val discoveredAt: String? = null,
     @SerialName("duration_ms") val durationMs: Int = 0,
     val status: String = "",
     @SerialName("position_ms") val positionMs: Int = 0,

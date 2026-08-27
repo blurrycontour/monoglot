@@ -1025,14 +1025,19 @@ private fun EpisodeCard(
 /**
  * Whether an episode arrived since the Listen tab was last opened.
  *
+ * Measured from when the server discovered it, not when the broadcaster aired
+ * it. Those differ by hours: 8 Sidor publishes at 09:44 and the nightly fetch
+ * picks it up the next morning, so keying off the publish stamp silently
+ * dropped the badge from everything that aired before your last visit.
+ *
  * Something already started is never new, whatever its date: the mark answers
  * "what showed up while I was away", and an episode you are part-way through
  * is not that.
  */
 private fun isNew(item: ItemSummary, since: Long): Boolean {
     if (since <= 0L || item.positionMs > 0 || item.completed) return false
-    val published = Dates.parse(item.publishedAt) ?: return false
-    return published.toInstant().toEpochMilli() > since
+    val discovered = Dates.parse(item.discoveredAt) ?: return false
+    return discovered.toInstant().toEpochMilli() > since
 }
 
 @Composable

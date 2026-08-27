@@ -17,11 +17,15 @@ type ItemSummary struct {
 	Title       string     `json:"title"`
 	Description string     `json:"description,omitempty"`
 	PublishedAt *time.Time `json:"published_at,omitempty"`
-	DurationMS  int        `json:"duration_ms"`
-	Status      string     `json:"status"`
-	PositionMS  int        `json:"position_ms"`
-	Completed   bool       `json:"completed"`
-	ListenCount int        `json:"listen_count"`
+	// When this server first saw the episode, which is what "new" means to a
+	// reader: the publisher's timestamp can be hours older than the fetch, and
+	// an episode that arrived while you were away is new whenever it aired.
+	DiscoveredAt *time.Time `json:"discovered_at,omitempty"`
+	DurationMS   int        `json:"duration_ms"`
+	Status       string     `json:"status"`
+	PositionMS   int        `json:"position_ms"`
+	Completed    bool       `json:"completed"`
+	ListenCount  int        `json:"listen_count"`
 }
 
 func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +42,7 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.pool.QueryContext(r.Context(), `
 		SELECT i.id, s.slug, s.name, i.title, COALESCE(i.description,''),
-		       i.published_at, COALESCE(i.duration_ms,0), i.status,
+		       i.published_at, i.created_at, COALESCE(i.duration_ms,0), i.status,
 		       COALESCE(p.position_ms,0), COALESCE(p.completed,false),
 		       COALESCE(p.listen_count,0)
 		FROM items i
@@ -57,14 +61,15 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 	out := []ItemSummary{}
 	for rows.Next() {
 		var it ItemSummary
-		var published db.NullTime
+		var published, discovered db.NullTime
 		if err := rows.Scan(&it.ID, &it.SourceSlug, &it.SourceName, &it.Title,
-			&it.Description, &published, &it.DurationMS, &it.Status,
+			&it.Description, &published, &discovered, &it.DurationMS, &it.Status,
 			&it.PositionMS, &it.Completed, &it.ListenCount); err != nil {
 			serverError(w, err)
 			return
 		}
 		it.PublishedAt = published.Ptr()
+		it.DiscoveredAt = discovered.Ptr()
 		out = append(out, it)
 	}
 	if err := rows.Err(); err != nil {
@@ -126,19 +131,20 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) loadItem(r *http.Request, id int) (ItemSummary, error) {
 	var it ItemSummary
-	var published db.NullTime
+	var published, discovered db.NullTime
 	err := s.pool.QueryRowContext(r.Context(), `
 		SELECT i.id, s.slug, s.name, i.title, COALESCE(i.description,''),
-		       i.published_at, COALESCE(i.duration_ms,0), i.status,
+		       i.published_at, i.created_at, COALESCE(i.duration_ms,0), i.status,
 		       COALESCE(p.position_ms,0), COALESCE(p.completed,false),
 		       COALESCE(p.listen_count,0)
 		FROM items i
 		JOIN sources s ON s.id = i.source_id
 		LEFT JOIN progress p ON p.item_id = i.id
 		WHERE i.id = ?`, id).Scan(&it.ID, &it.SourceSlug, &it.SourceName,
-		&it.Title, &it.Description, &published, &it.DurationMS, &it.Status,
-		&it.PositionMS, &it.Completed, &it.ListenCount)
+		&it.Title, &it.Description, &published, &discovered, &it.DurationMS,
+		&it.Status, &it.PositionMS, &it.Completed, &it.ListenCount)
 	it.PublishedAt = published.Ptr()
+	it.DiscoveredAt = discovered.Ptr()
 	return it, err
 }
 
