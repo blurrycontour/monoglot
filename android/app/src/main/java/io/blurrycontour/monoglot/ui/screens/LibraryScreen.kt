@@ -352,6 +352,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { repo.api.archiveItem(item.id) }
             runCatching { repo.removeDownload(item.id) }
             refresh()
+            // It is in the archive now. If that section is open, it has to
+            // appear there at once and in date order, or the episode simply
+            // vanishes and gets fetched again later by mistake.
+            reloadArchived(extra = 1)
             _state.value = _state.value.copy(busyIds = _state.value.busyIds - item.id)
         }
     }
@@ -399,10 +403,13 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     /** Re-reads the part of the archive already on screen, so an item that has
      *  just been cancelled reappears there — that is where it can be fetched
      *  again — and one that has just been queued drops out. */
-    private suspend fun reloadArchived() {
+    private suspend fun reloadArchived(extra: Int = 0) {
         val shown = _state.value.archived.size
         if (shown == 0) return
-        val limit = maxOf(shown, 10)
+        // [extra] is how many items have just joined the archive. Without it
+        // the page is re-read at its old size, and the arrival at the top
+        // pushes the oldest visible item off the bottom.
+        val limit = maxOf(shown + extra, 10)
         val page = runCatching {
             repo.api.archivedItems(_state.value.sourceFilter, offset = 0, limit = limit)
         }.getOrNull() ?: return
@@ -437,7 +444,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             repo.items(_state.value.sourceFilter).onSuccess {
                 _state.value = _state.value.copy(items = it)
             }
-            reloadArchived()
+            reloadArchived(extra = 1)
             _state.value = _state.value.copy(
                 cancellingIds = _state.value.cancellingIds - itemId,
             )
@@ -1091,12 +1098,33 @@ private fun ArchivedCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text(
-                    Dates.label(Dates.parse(item.publishedAt)),
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        Dates.label(Dates.parse(item.publishedAt)),
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // Removing an episode from the server does not unhear it.
+                    // The archive is where a re-fetch is decided, so it is the
+                    // one place that has to say the episode was already done.
+                    if (item.completed) {
+                        Spacer(Modifier.width(7.dp))
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = "Finished",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    } else if (item.positionMs > 0) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "Started",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(2.dp))
                 Text(
                     item.title.take(60),

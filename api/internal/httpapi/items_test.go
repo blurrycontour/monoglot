@@ -51,3 +51,34 @@ func TestItemReportsWhenItWasDiscoveredNotAired(t *testing.T) {
 		t.Fatalf("detail discovered_at = %v, want %v", one.Item.DiscoveredAt, it.DiscoveredAt)
 	}
 }
+
+// Archiving frees disk, it does not unhear the episode. The archive listing is
+// where a re-fetch is decided, so it has to carry the progress across — without
+// it the only record that you finished something is deleted along with its audio.
+func TestArchivedItemKeepsItsProgress(t *testing.T) {
+	r := newRig(t)
+
+	id := r.addItem("ready")
+	if _, err := r.pool.Exec(`
+		INSERT INTO progress (item_id, position_ms, completed, listen_count)
+		VALUES (?, ?, 1, 1)`, id, 900_000); err != nil {
+		t.Fatalf("progress: %v", err)
+	}
+
+	postBody(t, r, "/api/items/"+strconv.Itoa(id)+"/archive", "")
+
+	var list struct {
+		Items []ItemSummary `json:"items"`
+	}
+	r.get("/api/items?status=archived", &list)
+	if len(list.Items) != 1 {
+		t.Fatalf("want the archived item listed, got %d", len(list.Items))
+	}
+	got := list.Items[0]
+	if !got.Completed {
+		t.Error("completed lost on archive: the finished tick cannot be drawn")
+	}
+	if got.PositionMS != 900_000 {
+		t.Errorf("position_ms = %d, want 900000", got.PositionMS)
+	}
+}
