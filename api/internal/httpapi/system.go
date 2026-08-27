@@ -164,7 +164,14 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 	info.Storage.TotalBytes = info.Storage.AudioBytes + info.Storage.RawBytes +
 		info.Storage.CacheBytes + info.Storage.APKBytes
 	info.Storage.DiskFree = diskFree(s.cfg.AudioDir)
-	info.Containers = readContainerStats()
+	// ?fresh=1 trades the response time for a live reading. The System screen
+	// asks for it because it is showing a spinner while it waits; nothing on
+	// the request path does.
+	if r.URL.Query().Get("fresh") == "1" {
+		info.Containers = freshContainerStats(ctx)
+	} else {
+		info.Containers = readContainerStats()
+	}
 
 	info.Storage.DatabaseSize = db.FileSize(s.cfg.DatabasePath)
 	s.pool.QueryRowContext(ctx, `SELECT count(*) FROM lexemes`).Scan(&info.Lexicon.Lexemes)

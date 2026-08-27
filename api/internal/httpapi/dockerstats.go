@@ -48,7 +48,7 @@ var (
 	dockerMu       sync.Mutex
 	dockerCached   []ContainerStat
 	dockerSampled  time.Time
-	dockerSampling bool
+	dockerInflight chan struct{}
 	dockerCacheTTL = 15 * time.Second
 )
 
@@ -66,46 +66,67 @@ func readContainerStats() []ContainerStat {
 	dockerMu.Lock()
 	out := dockerCached
 	stale := time.Since(dockerSampled) >= dockerCacheTTL
-	if stale && !dockerSampling {
-		dockerSampling = true
-		go refreshContainerStats()
-	}
 	dockerMu.Unlock()
+	if stale {
+		startSample()
+	}
 	return out
+}
+
+// freshContainerStats waits for a sample taken now, joining one already in
+// flight rather than starting a second. The System screen's refresh asks for
+// this: a spinner is the user waiting to be told the current figure, and
+// handing back the previous one is not that.
+func freshContainerStats(ctx context.Context) []ContainerStat {
+	select {
+	case <-startSample():
+	case <-ctx.Done():
+		// The client gave up. Answer with whatever stands rather than holding
+		// a response nobody is reading any more.
+	}
+	dockerMu.Lock()
+	defer dockerMu.Unlock()
+	return dockerCached
 }
 
 // WarmContainerStats takes the first sample at startup, so the first System
 // screen of a fresh server is not the one screen that shows no containers.
-func WarmContainerStats() {
-	dockerMu.Lock()
-	if dockerSampling {
-		dockerMu.Unlock()
-		return
-	}
-	dockerSampling = true
-	dockerMu.Unlock()
-	go refreshContainerStats()
-}
+func WarmContainerStats() { startSample() }
 
-// refreshContainerStats samples in the background. It gets its own context:
-// the request that noticed the staleness is long finished, and its context
-// cancelled, by the time the daemon returns.
-func refreshContainerStats() {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	stats := sampleContainers(ctx)
-
+// startSample returns a channel closed when the current sample finishes,
+// starting one if none is running. Single-flighted: sampling costs a second
+// of daemon time per container, and two requests arriving together must cost
+// one sample, not two.
+//
+// The sample gets its own context. A background refresh outlives the request
+// that noticed the staleness, and would otherwise be cancelled with it.
+func startSample() <-chan struct{} {
 	dockerMu.Lock()
 	defer dockerMu.Unlock()
-	dockerSampling = false
-	// A failed sample must not blank a good reading: the daemon being briefly
-	// unreachable is not the same as there being no containers. It does still
-	// stamp the clock, or a daemon that is simply absent is re-sampled on
-	// every request for the life of the process.
-	dockerSampled = time.Now()
-	if len(stats) > 0 || dockerCached == nil {
-		dockerCached = stats
+	if dockerInflight != nil {
+		return dockerInflight
 	}
+	done := make(chan struct{})
+	dockerInflight = done
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		stats := sampleContainers(ctx)
+
+		dockerMu.Lock()
+		// A failed sample must not blank a good reading: the daemon being
+		// briefly unreachable is not the same as there being no containers.
+		// It does still stamp the clock, or a daemon that is simply absent is
+		// re-sampled on every request for the life of the process.
+		dockerSampled = time.Now()
+		if len(stats) > 0 || dockerCached == nil {
+			dockerCached = stats
+		}
+		dockerInflight = nil
+		dockerMu.Unlock()
+		close(done)
+	}()
+	return done
 }
 
 type dockerContainer struct {

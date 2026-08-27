@@ -94,7 +94,10 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
                     schedules = it.schedules, nextRun = it.nextRun,
                 )
             }
-            runCatching { repo.api.system() }
+            // This screen exists to show the container figures, and it always
+            // has a spinner up while it loads, so it pays for a live sample
+            // rather than showing the one taken before it was opened.
+            runCatching { repo.api.system(fresh = true) }
                 .onSuccess {
                     _state.value = _state.value.copy(
                         loading = false, info = it, error = null,

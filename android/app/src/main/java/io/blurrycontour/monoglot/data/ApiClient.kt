@@ -179,8 +179,10 @@ class ApiClient(private val settings: SettingsStore) {
         post("/api/listening", """{"days":[$payload]}""")
     }
 
-    suspend fun system(): SystemInfo =
-        json.decodeFromString(get("/api/system"))
+    /** [fresh] waits for a live container CPU sample, which costs about a
+     *  second per container. Only worth asking for behind a spinner. */
+    suspend fun system(fresh: Boolean = false): SystemInfo =
+        json.decodeFromString(get("/api/system" + if (fresh) "?fresh=1" else ""))
 
     suspend fun archiveItem(itemId: Int) { post("/api/items/$itemId/archive", "{}") }
 
