@@ -125,7 +125,13 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch {
-            _state.value = _state.value.copy(newSince = repo.settings.takeListenSeenAt())
+            // Read first, write second. Written as one expression, the state
+            // snapshot is taken before the DataStore read suspends, so the
+            // write puts back everything as it was when the coroutine started
+            // — and the first DataStore read of a launch is slow enough that
+            // the source chips had already landed and were wiped by it.
+            val since = repo.settings.takeListenSeenAt()
+            _state.value = _state.value.copy(newSince = since)
         }
         refresh(initial = true)
         // Everything held here belongs to one server; start over when it
@@ -203,10 +209,15 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun refreshMeta() {
         loadSources()
         val status = runCatching { repo.api.status(_state.value.sourceFilter) }.getOrNull() ?: return
+        // Both reads finish before the write. This one runs beside the episode
+        // load now, and probing the archive inside the copy() would take its
+        // state snapshot before the probe and put it back after — reverting
+        // whatever the item fetch had landed in the meantime.
+        val hasArchive = _state.value.hasArchive || probeArchived(_state.value.sourceFilter)
         _state.value = _state.value.copy(
             status = status,
             batchTotal = batchTotalFor(status),
-            hasArchive = _state.value.hasArchive || probeArchived(_state.value.sourceFilter),
+            hasArchive = hasArchive,
         )
         if (status.processing > 0 || status.ingestRunning) startPolling() else stopPolling()
     }
@@ -326,7 +337,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                     status = it, batchTotal = batchTotalFor(it),
                 )
             }
-            _state.value = _state.value.copy(hasArchive = probeArchived(slug))
+            // Read first, write second: see the note in init. A refresh in
+            // flight while the chip is tapped would otherwise be undone here.
+            val hasArchive = probeArchived(slug)
+            _state.value = _state.value.copy(hasArchive = hasArchive)
             repo.items(slug).onSuccess { items ->
                 val downloaded = repo.offline.downloads.all().map { it.itemId }.toSet()
                 _state.value = _state.value.copy(
