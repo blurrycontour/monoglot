@@ -16,6 +16,20 @@ private val Context.dataStore by preferencesDataStore(name = "settings")
 
 /** Transcript visibility. Default is [HIDDEN]: audio is primary, text is a
  *  crutch you reveal on demand. */
+/**
+ * Where the sentence being spoken sits when the transcript follows the audio.
+ *
+ * It was pinned to the top, which put every line you had not heard yet below
+ * the fold: by the time a word was worth looking up, the line carrying it had
+ * already scrolled off and had to be found again by hand. Middle keeps a few
+ * lines of what is coming and what has just gone.
+ */
+enum class TranscriptAnchor(val label: String, val fraction: Float) {
+    TOP("Top", 0f),
+    MIDDLE("Middle", 0.5f),
+    BOTTOM("Bottom", 1f),
+}
+
 enum class TranscriptMode {
     /** No text at all. The default, and the point of the app. */
     HIDDEN,
@@ -45,6 +59,7 @@ class SettingsStore(private val context: Context) {
         val AUTH_TOKEN = stringPreferencesKey("auth_token")
         val SPEED = floatPreferencesKey("playback_speed")
         val TRANSCRIPT_MODE = stringPreferencesKey("transcript_mode")
+        val TRANSCRIPT_ANCHOR = stringPreferencesKey("transcript_anchor")
         val THEME = stringPreferencesKey("theme_id")
         val ACCENT = stringPreferencesKey("accent_id")
         val LIBRARY_FILTER = stringPreferencesKey("library_filter")
@@ -76,6 +91,10 @@ class SettingsStore(private val context: Context) {
     val transcriptModeFlow: Flow<TranscriptMode> = pref {
         runCatching { TranscriptMode.valueOf(it[Keys.TRANSCRIPT_MODE] ?: "HIDDEN") }
             .getOrDefault(TranscriptMode.HIDDEN)
+    }
+    val transcriptAnchorFlow: Flow<TranscriptAnchor> = pref {
+        runCatching { TranscriptAnchor.valueOf(it[Keys.TRANSCRIPT_ANCHOR] ?: "MIDDLE") }
+            .getOrDefault(TranscriptAnchor.MIDDLE)
     }
 
     val themeFlow: Flow<String> = pref { it[Keys.THEME] ?: "black" }
@@ -192,5 +211,9 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setTranscriptMode(mode: TranscriptMode) {
         context.dataStore.edit { it[Keys.TRANSCRIPT_MODE] = mode.name }
+    }
+
+    suspend fun setTranscriptAnchor(anchor: TranscriptAnchor) {
+        context.dataStore.edit { it[Keys.TRANSCRIPT_ANCHOR] = anchor.name }
     }
 }

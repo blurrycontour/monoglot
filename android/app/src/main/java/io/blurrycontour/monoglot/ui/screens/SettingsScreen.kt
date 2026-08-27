@@ -39,6 +39,7 @@ import io.blurrycontour.monoglot.data.SourceRow
 import io.blurrycontour.monoglot.player.PlaybackHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import io.blurrycontour.monoglot.data.TranscriptAnchor
 import io.blurrycontour.monoglot.data.TranscriptMode
 import io.blurrycontour.monoglot.ui.theme.ACCENTS
 import io.blurrycontour.monoglot.ui.theme.ALL_THEMES
@@ -52,6 +53,7 @@ data class SettingsState(
     val authToken: String = "",
     val speed: Float = 1.0f,
     val transcriptMode: TranscriptMode = TranscriptMode.HIDDEN,
+    val transcriptAnchor: TranscriptAnchor = TranscriptAnchor.MIDDLE,
     val sources: List<SourceRow> = emptyList(),
     val message: String? = null,
     val connection: Connection = Connection.UNKNOWN,
@@ -77,6 +79,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 authToken = repo.settings.authToken(),
                 speed = repo.settings.speedFlow.first(),
                 transcriptMode = repo.settings.transcriptModeFlow.first(),
+                transcriptAnchor = repo.settings.transcriptAnchorFlow.first(),
                 offlineBytes = repo.offline.totalBytes(),
                 offlineCount = repo.offline.downloads.all().size,
             )
@@ -126,6 +129,11 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun setMode(m: TranscriptMode) {
         viewModelScope.launch { repo.settings.setTranscriptMode(m) }
         _state.value = _state.value.copy(transcriptMode = m)
+    }
+
+    fun setAnchor(a: TranscriptAnchor) {
+        viewModelScope.launch { repo.settings.setTranscriptAnchor(a) }
+        _state.value = _state.value.copy(transcriptAnchor = a)
     }
 
     fun toggleSource(source: SourceRow) {
@@ -339,6 +347,27 @@ fun SettingsScreen(visible: Boolean = true) {
                 Spacer(Modifier.height(8.dp))
                 Text(
                     "Hidden is the default on purpose: the app works by making you listen first.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Spacer(Modifier.height(14.dp))
+                Text("Spoken line sits", style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(8.dp))
+                SingleChoiceSegmentedButtonRow {
+                    TranscriptAnchor.entries.forEachIndexed { i, a ->
+                        SegmentedButton(
+                            selected = state.transcriptAnchor == a,
+                            onClick = { vm.setAnchor(a) },
+                            shape = SegmentedButtonDefaults.itemShape(i, TranscriptAnchor.entries.size),
+                        ) { Text(a.label) }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Where the line being spoken sits in the full transcript. " +
+                        "Middle keeps the lines either side of it on screen, so a " +
+                        "word worth looking up is still there a moment later.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

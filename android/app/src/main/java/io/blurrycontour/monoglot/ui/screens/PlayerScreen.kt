@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -35,6 +36,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.blurrycontour.monoglot.data.Segment
 import io.blurrycontour.monoglot.data.Token
+import io.blurrycontour.monoglot.data.Graph
+import io.blurrycontour.monoglot.data.TranscriptAnchor
 import io.blurrycontour.monoglot.data.TranscriptMode
 import io.blurrycontour.monoglot.player.PlayerViewModel
 import io.blurrycontour.monoglot.ui.theme.TranscriptStyle
@@ -307,10 +310,15 @@ private fun FullView(vm: PlayerViewModel, state: io.blurrycontour.monoglot.playe
             if (interaction is DragInteraction.Start) following = false
         }
     }
-    LaunchedEffect(activeSeg, following) {
+    // Where the spoken line sits. Collected rather than read once, so changing
+    // it in Settings takes effect on the episode already open.
+    val anchor by Graph.repository.settings.transcriptAnchorFlow
+        .collectAsState(initial = TranscriptAnchor.MIDDLE)
+
+    LaunchedEffect(activeSeg, following, anchor) {
         if (following && activeSeg >= 0) {
-            listState.animateScrollToItem(
-                activeSeg.coerceAtMost(idx.segments.lastIndex.coerceAtLeast(0)))
+            val target = activeSeg.coerceAtMost(idx.segments.lastIndex.coerceAtLeast(0))
+            listState.animateScrollToItem(target, anchorOffset(listState, target, anchor))
         }
     }
 
@@ -369,6 +377,28 @@ private fun FullView(vm: PlayerViewModel, state: io.blurrycontour.monoglot.playe
             }
         }
     }
+}
+
+/**
+ * Pixel offset that lands [index] at the anchor rather than at the top.
+ *
+ * animateScrollToItem measures from the top of the viewport and treats a
+ * positive offset as scrolling further forward, so putting a line lower down
+ * the screen means a negative one. The line's own height comes out of the sum,
+ * or a tall sentence would be positioned by its first row and hang off the
+ * bottom. When the line is not on screen its height is not yet known and zero
+ * is close enough: it is about to be measured, and the next segment corrects
+ * it. Scrolling is clamped at the ends of the list by LazyColumn itself, so
+ * the first and last sentences simply sit where they can.
+ */
+private fun anchorOffset(state: LazyListState, index: Int, anchor: TranscriptAnchor): Int {
+    if (anchor == TranscriptAnchor.TOP) return 0
+    val info = state.layoutInfo
+    val viewport = info.viewportEndOffset - info.viewportStartOffset
+    if (viewport <= 0) return 0
+    val itemHeight = info.visibleItemsInfo.firstOrNull { it.index == index }?.size ?: 0
+    val room = (viewport - itemHeight).coerceAtLeast(0)
+    return -(room * anchor.fraction).toInt()
 }
 
 /** LazyColumn.itemsIndexed for a plain List, kept local to avoid an import

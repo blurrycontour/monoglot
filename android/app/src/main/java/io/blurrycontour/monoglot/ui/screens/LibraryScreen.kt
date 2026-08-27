@@ -56,6 +56,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.blurrycontour.monoglot.data.SourceRow
+import io.blurrycontour.monoglot.ui.theme.sourceColor
 import io.blurrycontour.monoglot.player.PlaybackHolder
 import io.blurrycontour.monoglot.ui.util.Dates
 import io.blurrycontour.monoglot.ui.util.formatBytesShort
@@ -1096,12 +1097,7 @@ private fun NewBadge() {
 /** Sources are colour-coded so the eye can separate them without reading. */
 @Composable
 private fun SourceDot(slug: String) {
-    val color = when (slug) {
-        "klartext" -> MaterialTheme.colorScheme.primary
-        "8sidor" -> MaterialTheme.colorScheme.secondary
-        else -> MaterialTheme.colorScheme.outline
-    }
-    Box(Modifier.size(7.dp).clip(CircleShape).background(color))
+    Box(Modifier.size(7.dp).clip(CircleShape).background(sourceColor(slug)))
 }
 
 /**
