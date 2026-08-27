@@ -121,8 +121,11 @@ and skip on every later start. To reimport after a dataset update:
 docker compose run --rm api import-morphology --force
 ```
 
-Ingestion also runs in-process nightly at `INGEST_CRON_HOUR:INGEST_CRON_MINUTE`
-(default 03:30, Europe/Stockholm).
+Ingestion also runs unattended, in-process, at whatever times are set in the
+app's System tab. They are rows in the `schedules` table rather than settings in
+`.env`, so changing when the server fetches needs neither a file edit nor a
+restart. A fresh server has none and runs nothing on its own until a time is
+added; the clock is the container's, so `TZ` still decides what `03:30` means.
 
 ## Signing key in CI
 
