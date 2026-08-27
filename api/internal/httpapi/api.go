@@ -80,6 +80,9 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/api/sources", s.listSources)
 		r.Post("/api/sources/{id}/enabled", s.setSourceEnabled)
 		r.Post("/api/admin/ingest", s.triggerIngest)
+		r.Get("/api/schedules", s.getSchedules)
+		r.Post("/api/schedules", s.addSchedule)
+		r.Delete("/api/schedules/{id}", s.deleteSchedule)
 	})
 	return r
 }

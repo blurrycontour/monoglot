@@ -17,8 +17,6 @@ type Config struct {
 	WorkerURL    string
 	APKPath      string
 
-	IngestHour    int
-	IngestMinute  int
 	IngestOnStart bool
 }
 
@@ -31,8 +29,6 @@ func Load() Config {
 		RawDir:        env("RAW_DIR", "/data/raw"),
 		WorkerURL:     env("WORKER_URL", "http://worker:9000"),
 		APKPath:       env("APK_PATH", "/data/apk/monoglot.apk"),
-		IngestHour:    envInt("INGEST_CRON_HOUR", 3),
-		IngestMinute:  envInt("INGEST_CRON_MINUTE", 30),
 		IngestOnStart: envBool("INGEST_ON_START", false),
 	}
 }

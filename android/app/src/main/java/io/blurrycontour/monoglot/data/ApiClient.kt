@@ -64,6 +64,21 @@ class ApiClient(private val settings: SettingsStore) {
         }
     }
 
+    private suspend fun delete(path: String): String = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url(baseUrl() + path)
+            .header("Authorization", "Bearer ${token()}")
+            .delete()
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw ApiException("HTTP ${resp.code}: ${body.take(200)}")
+            }
+            body
+        }
+    }
+
     suspend fun items(source: String? = null, status: String = "ready"): List<ItemSummary> {
         val q = buildString {
             append("/api/items?status=$status&limit=200")
@@ -191,6 +206,17 @@ class ApiClient(private val settings: SettingsStore) {
 
     suspend fun triggerIngest() {
         post("/api/admin/ingest", "{}")
+    }
+
+    suspend fun schedules(): SchedulesResponse =
+        json.decodeFromString(get("/api/schedules"))
+
+    suspend fun addSchedule(hour: Int, minute: Int) {
+        post("/api/schedules", """{"hour":$hour,"minute":$minute}""")
+    }
+
+    suspend fun deleteSchedule(id: Int) {
+        delete("/api/schedules/$id")
     }
 
     /** Streaming URL for ExoPlayer. The token goes in the query string because

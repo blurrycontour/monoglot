@@ -33,6 +33,7 @@ import io.blurrycontour.monoglot.data.BootstrapStatus
 import io.blurrycontour.monoglot.data.ContainerStat
 import io.blurrycontour.monoglot.data.DayTotal
 import io.blurrycontour.monoglot.data.Graph
+import io.blurrycontour.monoglot.data.Schedule
 import io.blurrycontour.monoglot.data.SourceStats
 import io.blurrycontour.monoglot.data.SystemInfo
 import io.blurrycontour.monoglot.ui.util.RefreshWhenVisible
@@ -49,6 +50,8 @@ data class SystemState(
     val message: String? = null,
     val busy: Boolean = false,
     val refreshing: Boolean = false,
+    val schedules: List<Schedule> = emptyList(),
+    val nextRun: String? = null,
 )
 
 class SystemViewModel(app: Application) : AndroidViewModel(app) {
@@ -85,6 +88,11 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { repo.syncListening() }
             runCatching { repo.listeningHistory() }.onSuccess {
                 _state.value = _state.value.copy(listening = it)
+            }
+            runCatching { repo.api.schedules() }.onSuccess {
+                _state.value = _state.value.copy(
+                    schedules = it.schedules, nextRun = it.nextRun,
+                )
             }
             runCatching { repo.api.system() }
                 .onSuccess {
@@ -164,6 +172,36 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
                 message = if (ok) "Fetching new episodes" else "Could not start"
             )
             load()
+        }
+    }
+
+    fun addSchedule(hour: Int, minute: Int) {
+        viewModelScope.launch {
+            runCatching { repo.api.addSchedule(hour, minute) }
+                .onSuccess { reloadSchedules() }
+                .onFailure {
+                    _state.value = _state.value.copy(message = "Could not add the time")
+                }
+        }
+    }
+
+    fun deleteSchedule(id: Int) {
+        viewModelScope.launch {
+            runCatching { repo.api.deleteSchedule(id) }
+                .onSuccess { reloadSchedules() }
+                .onFailure {
+                    _state.value = _state.value.copy(message = "Could not remove the time")
+                }
+        }
+    }
+
+    /** Re-reads only the schedule, so editing a time does not reload the whole
+     *  screen and make every figure on it flicker. */
+    private suspend fun reloadSchedules() {
+        runCatching { repo.api.schedules() }.onSuccess {
+            _state.value = _state.value.copy(
+                schedules = it.schedules, nextRun = it.nextRun,
+            )
         }
     }
 
@@ -268,6 +306,14 @@ fun SystemScreen(visible: Boolean = true) {
                             }
                         }
                     }
+
+                    // What gets fetched, then when it gets fetched.
+                    ScheduleCard(
+                        schedules = state.schedules,
+                        nextRun = state.nextRun,
+                        onAdd = { h, m -> vm.addSchedule(h, m) },
+                        onDelete = { vm.deleteSchedule(it) },
+                    )
 
                     SectionCard("Server storage") {
                         StatRow("Audio", formatBytesShort(sys.storage.audioBytes))

@@ -45,7 +45,11 @@ alias is still `svenska` and cannot change — it is baked into the key.
 
 `.env` is the only list of settings: compose hands the whole file to both
 services with `env_file`, so never add an `environment:` block. Defaults in Go
-match `.env.example` and exist only so the binary runs outside compose.
+match `.env.example` and exist only so the binary runs outside compose. The one
+exception is the ingest schedule, which lives in the `schedules` table and is
+edited from the app's System tab — a setting whose whole point is being changed
+without a file edit and a restart. A fresh server has no schedule and runs
+nothing unattended until somebody adds a time.
 
 ## Traps
 

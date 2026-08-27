@@ -23,10 +23,25 @@ type Runner struct {
 	// run — transcription must stay serial — but dropping it silently meant
 	// work queued during a run waited for the watchdog.
 	rerun bool
+
+	// Wakes the cron loop when the schedule is edited. Buffered and sent to
+	// without blocking: the loop only needs to know that something changed,
+	// and it re-reads the table itself.
+	reload chan struct{}
 }
 
 func NewRunner(pool *sql.DB, cfg config.Config) *Runner {
-	return &Runner{pool: pool, cfg: cfg}
+	return &Runner{pool: pool, cfg: cfg, reload: make(chan struct{}, 1)}
+}
+
+// ReloadSchedules tells the cron loop to recompute its next wake-up. Called
+// after the schedule is edited, so a time added for eight minutes from now
+// fires then rather than after the loop's existing sleep expires.
+func (r *Runner) ReloadSchedules() {
+	select {
+	case r.reload <- struct{}{}:
+	default:
+	}
 }
 
 func (r *Runner) Running() bool {
@@ -227,23 +242,64 @@ func (r *Runner) transcribeLoop(ctx context.Context) {
 	log.Printf("ingest: reached the %d job limit for one run; the watchdog will continue", maxJobs)
 }
 
-// StartCron runs the pipeline daily at the configured local time. In-process
+// StartCron runs the pipeline at each configured local time. In-process
 // rather than an external scheduler: fewer moving parts, per the spec.
+//
+// The times live in the database and are edited from the app, so the loop
+// re-reads them on every pass and can be woken between passes. A server with
+// no schedule sleeps on a nil channel until one is added — it does not poll,
+// and it does not quietly ingest on a timetable nobody chose.
 func (r *Runner) StartCron(ctx context.Context) {
 	go func() {
 		for {
-			next := nextRun(time.Now(), r.cfg.IngestHour, r.cfg.IngestMinute)
-			wait := time.Until(next)
-			log.Printf("ingest: next scheduled run %s (in %s)",
-				next.Format(time.RFC3339), wait.Round(time.Minute))
+			var wake <-chan time.Time
+			var timer *time.Timer
+			if next, ok := r.NextRun(ctx, time.Now()); ok {
+				wait := time.Until(next)
+				log.Printf("ingest: next scheduled run %s (in %s)",
+					next.Format(time.RFC3339), wait.Round(time.Minute))
+				// Stopped on every path out of the select rather than
+				// deferred: a deferred stop in this loop would hold every
+				// timer the process ever armed until the loop itself ended.
+				timer = time.NewTimer(wait)
+				wake = timer.C
+			} else {
+				log.Printf("ingest: no schedule set, nothing will run unattended")
+			}
 			select {
 			case <-ctx.Done():
+				stop(timer)
 				return
-			case <-time.After(wait):
+			case <-r.reload:
+				stop(timer)
+			case <-wake:
 				r.Trigger("cron")
 			}
 		}
 	}()
+}
+
+func stop(t *time.Timer) {
+	if t != nil {
+		t.Stop()
+	}
+}
+
+// NextRun is the soonest configured time strictly after now, if there is one.
+func (r *Runner) NextRun(ctx context.Context, now time.Time) (time.Time, bool) {
+	times, err := ListSchedules(ctx, r.pool)
+	if err != nil {
+		log.Printf("ingest: reading schedules: %v", err)
+		return time.Time{}, false
+	}
+	var best time.Time
+	for _, t := range times {
+		at := nextRun(now, t.Hour, t.Minute)
+		if best.IsZero() || at.Before(best) {
+			best = at
+		}
+	}
+	return best, !best.IsZero()
 }
 
 // MaxAttempts is how many times an item may fail before it is left alone.

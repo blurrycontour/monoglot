@@ -259,3 +259,26 @@ data class DayTotal(
 
 @Serializable
 data class ListeningResponse(val days: List<DayTotal> = emptyList())
+
+/**
+ * One time of day at which the server runs the pipeline by itself.
+ *
+ * The server's local clock, not the phone's: the times are typed against the
+ * machine that will act on them, and a phone in another timezone must not
+ * quietly reinterpret them.
+ */
+@Serializable
+data class Schedule(
+    val id: Int = 0,
+    val hour: Int = 0,
+    val minute: Int = 0,
+) {
+    /** 24h, zero-padded — the same way it was typed. */
+    val label: String get() = "%02d:%02d".format(java.util.Locale.ROOT, hour, minute)
+}
+
+@Serializable
+data class SchedulesResponse(
+    val schedules: List<Schedule> = emptyList(),
+    @SerialName("next_run") val nextRun: String? = null,
+)
