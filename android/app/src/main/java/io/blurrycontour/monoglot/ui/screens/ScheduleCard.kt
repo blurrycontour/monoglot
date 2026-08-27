@@ -1,6 +1,7 @@
 package io.blurrycontour.monoglot.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,16 +12,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.outlined.Keyboard
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimeInput
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -128,21 +133,53 @@ private fun untilLabel(iso: String): String {
 }
 
 /**
- * Typed entry rather than the dial: a scheduled time is an exact number
- * somebody already has in mind, and the dial is both wider than a dialog wants
- * to be and slower for a value like 03:30.
+ * The platform's own time picker, both halves of it.
+ *
+ * Material ships the dial and the keyboard entry as two composables and the
+ * real dialog offers a toggle between them; compose-material3 1.3 has no
+ * assembled `TimePickerDialog` to call, so the shell is built here. Shipping
+ * only the typed half, as this first did, quietly removed a control people
+ * expect to find.
+ *
+ * BasicAlertDialog rather than AlertDialog: the dial is a fixed 256dp of
+ * content that the standard dialog's text slot is not shaped to hold.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TimeDialog(onDismiss: () -> Unit, onConfirm: (Int, Int) -> Unit) {
     val state = rememberTimePickerState(initialHour = 3, initialMinute = 30, is24Hour = true)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Run at") },
-        text = { TimeInput(state = state) },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(state.hour, state.minute) }) { Text("Add") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
+    // The dial first, as Material does: it is the faster way to an approximate
+    // time, and the keyboard is one tap away for an exact one.
+    var typing by remember { mutableStateOf(false) }
+
+    BasicAlertDialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            tonalElevation = 6.dp,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            Column(Modifier.padding(24.dp)) {
+                Text(
+                    "Run at",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 20.dp),
+                )
+                if (typing) TimeInput(state = state) else TimePicker(state = state)
+
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { typing = !typing }) {
+                        Icon(
+                            if (typing) Icons.Outlined.Schedule else Icons.Outlined.Keyboard,
+                            contentDescription =
+                                if (typing) "Switch to the clock" else "Switch to typing",
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(onClick = { onConfirm(state.hour, state.minute) }) { Text("Add") }
+                }
+            }
+        }
+    }
 }
