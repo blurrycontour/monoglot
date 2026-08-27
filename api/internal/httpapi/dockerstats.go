@@ -38,13 +38,18 @@ type ContainerStat struct {
 }
 
 // Sampling costs about a second per container: the daemon deliberately waits
-// for a second collection so the CPU delta is meaningful. Cached so that
-// polling /api/system does not pay it every time.
+// for a second collection so the CPU delta is meaningful. That second is not
+// something a request may wait on — /api/system also carries the per-source
+// counts the Listen tab draws its filter chips from, and those chips took two
+// seconds to appear behind a CPU figure nothing on that screen shows. So the
+// reading is served from cache and refreshed behind the response: a request
+// sees the previous sample, never the one being taken.
 var (
 	dockerMu       sync.Mutex
 	dockerCached   []ContainerStat
 	dockerSampled  time.Time
-	dockerCacheTTL = 5 * time.Second
+	dockerSampling bool
+	dockerCacheTTL = 15 * time.Second
 )
 
 var dockerClient = &http.Client{
@@ -57,27 +62,50 @@ var dockerClient = &http.Client{
 	},
 }
 
-func readContainerStats(ctx context.Context) []ContainerStat {
+func readContainerStats() []ContainerStat {
 	dockerMu.Lock()
-	if time.Since(dockerSampled) < dockerCacheTTL {
-		out := dockerCached
-		dockerMu.Unlock()
-		return out
+	out := dockerCached
+	stale := time.Since(dockerSampled) >= dockerCacheTTL
+	if stale && !dockerSampling {
+		dockerSampling = true
+		go refreshContainerStats()
 	}
 	dockerMu.Unlock()
+	return out
+}
 
+// WarmContainerStats takes the first sample at startup, so the first System
+// screen of a fresh server is not the one screen that shows no containers.
+func WarmContainerStats() {
+	dockerMu.Lock()
+	if dockerSampling {
+		dockerMu.Unlock()
+		return
+	}
+	dockerSampling = true
+	dockerMu.Unlock()
+	go refreshContainerStats()
+}
+
+// refreshContainerStats samples in the background. It gets its own context:
+// the request that noticed the staleness is long finished, and its context
+// cancelled, by the time the daemon returns.
+func refreshContainerStats() {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 	stats := sampleContainers(ctx)
 
 	dockerMu.Lock()
+	defer dockerMu.Unlock()
+	dockerSampling = false
 	// A failed sample must not blank a good reading: the daemon being briefly
-	// unreachable is not the same as there being no containers.
+	// unreachable is not the same as there being no containers. It does still
+	// stamp the clock, or a daemon that is simply absent is re-sampled on
+	// every request for the life of the process.
+	dockerSampled = time.Now()
 	if len(stats) > 0 || dockerCached == nil {
 		dockerCached = stats
-		dockerSampled = time.Now()
 	}
-	out := dockerCached
-	dockerMu.Unlock()
-	return out
 }
 
 type dockerContainer struct {

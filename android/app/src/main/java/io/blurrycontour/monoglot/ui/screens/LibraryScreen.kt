@@ -55,7 +55,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import io.blurrycontour.monoglot.data.SourceStats
+import io.blurrycontour.monoglot.data.SourceRow
 import io.blurrycontour.monoglot.player.PlaybackHolder
 import io.blurrycontour.monoglot.ui.util.Dates
 import io.blurrycontour.monoglot.ui.util.formatBytesShort
@@ -86,7 +86,7 @@ data class LibraryState(
     val sourceFilter: String? = null,
     val filter: LibraryFilter = LibraryFilter.ALL,
     val status: PipelineStatus? = null,
-    val sources: List<SourceStats> = emptyList(),
+    val sources: List<SourceRow> = emptyList(),
     /** How many items were in flight when this batch started, so progress can
      *  be shown as a fraction rather than a spinner that never moves. */
     val batchTotal: Int = 0,
@@ -150,6 +150,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                 refreshing = !initial,
                 error = null,
             )
+            // Concurrent with the episode load, not behind it: the chips and
+            // the queue banner describe the same list and should arrive with
+            // it, and neither depends on what the item fetch returns.
+            val meta = launch { refreshMeta() }
             repo.syncProgress()
             val result = repo.items(_state.value.sourceFilter)
             val downloaded = repo.offline.downloads.all().map { it.itemId }.toSet()
@@ -163,7 +167,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                         error = it.message ?: "Cannot reach server")
                 },
             )
-            refreshMeta()
+            meta.join()
             if (!initial) {
                 val elapsed = System.currentTimeMillis() - started
                 if (elapsed < MIN_REFRESH_MS) delay(MIN_REFRESH_MS - elapsed)
@@ -183,10 +187,21 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun refreshMeta() {
-        runCatching { repo.api.system() }.onSuccess {
-            _state.value = _state.value.copy(sources = it.sources)
+    /**
+     * The source filter chips, and nothing else.
+     *
+     * These used to come out of /api/system, which samples container CPU: two
+     * seconds, spent so the chips could show a per-source count. /api/sources
+     * is the one query they actually need.
+     */
+    private suspend fun loadSources() {
+        runCatching { repo.api.sources() }.onSuccess {
+            _state.value = _state.value.copy(sources = it)
         }
+    }
+
+    private suspend fun refreshMeta() {
+        loadSources()
         val status = runCatching { repo.api.status(_state.value.sourceFilter) }.getOrNull() ?: return
         _state.value = _state.value.copy(
             status = status,
@@ -789,7 +804,7 @@ fun AppMark(modifier: Modifier = Modifier, tint: Color = MaterialTheme.colorSche
 private fun SourceFilterRow(state: LibraryState, onSelect: (String?) -> Unit) {
     // Scrolls: with four sources the row overflowed and the last chip wrapped
     // its label one character per line.
-    val all = state.sources.sumOf { it.ready }
+    val all = state.sources.sumOf { it.itemCount }
     LazyRow(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         contentPadding = PaddingValues(horizontal = 16.dp),
@@ -807,7 +822,7 @@ private fun SourceFilterRow(state: LibraryState, onSelect: (String?) -> Unit) {
             FilterChip(
                 selected = state.sourceFilter == source.slug,
                 onClick = { onSelect(source.slug) },
-                label = { Text("${source.name}  ${source.ready}", maxLines = 1) },
+                label = { Text("${source.name}  ${source.itemCount}", maxLines = 1) },
             )
         }
     }

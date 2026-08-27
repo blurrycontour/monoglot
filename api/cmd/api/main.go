@@ -163,6 +163,11 @@ func serve(ctx context.Context, cfg config.Config) {
 		runner.Trigger("startup")
 	}
 
+	// Container CPU takes about a second per container to sample and is never
+	// sampled on the request path. Taking the first one now means the System
+	// screen has a reading before anyone opens it.
+	httpapi.WarmContainerStats()
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           httpapi.NewServer(pool, cfg, runner).Routes(),
