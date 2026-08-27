@@ -3,6 +3,6 @@
 faster-whisper==1.1.1
 # faster-whisper 1.1.1 imports requests but does not declare it as a
 # dependency, so pin it here or the module fails to import at startup.
-requests==2.32.3
+requests==2.33.0
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
