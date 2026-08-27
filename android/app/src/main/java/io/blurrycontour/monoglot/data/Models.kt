@@ -284,3 +284,13 @@ data class SchedulesResponse(
     val schedules: List<Schedule> = emptyList(),
     @SerialName("next_run") val nextRun: String? = null,
 )
+
+@Serializable
+data class ModelOption(val id: String = "", val note: String = "")
+
+@Serializable
+data class ModelSettings(
+    val model: String = "",
+    val default: String = "",
+    val suggested: List<ModelOption> = emptyList(),
+)

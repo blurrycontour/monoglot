@@ -199,7 +199,11 @@ func transcribeItem(ctx context.Context, pool *sql.DB, workerURL, rawDir string,
 	// as a cancellation and never be marked failed or retried.
 	defer abort()
 	registerTranscription(id, abort)
-	resp, err := callWorker(callCtx, workerURL, audioPath, asr)
+	// Read here rather than passed down from the run: the model is edited from
+	// the app, and a batch that started before the change should pick it up on
+	// its next item, not on the next restart.
+	model := TranscriptionModel(ctx, pool)
+	resp, err := callWorker(callCtx, workerURL, audioPath, asr, model)
 	unregisterTranscription(id)
 	if err != nil {
 		// The worker gave the job up because we asked, or we stopped waiting
@@ -244,8 +248,10 @@ func transcribeItem(ctx context.Context, pool *sql.DB, workerURL, rawDir string,
 	return persist(ctx, pool, id, lang, resp)
 }
 
-func callWorker(ctx context.Context, workerURL, audioPath, language string) (*TranscriptResponse, error) {
-	body, err := json.Marshal(map[string]string{"audio_path": audioPath, "language": language})
+func callWorker(ctx context.Context, workerURL, audioPath, language, model string) (*TranscriptResponse, error) {
+	body, err := json.Marshal(map[string]string{
+		"audio_path": audioPath, "language": language, "model": model,
+	})
 	if err != nil {
 		return nil, err
 	}

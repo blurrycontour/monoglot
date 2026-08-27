@@ -184,6 +184,14 @@ class ApiClient(private val settings: SettingsStore) {
     suspend fun system(fresh: Boolean = false): SystemInfo =
         json.decodeFromString(get("/api/system" + if (fresh) "?fresh=1" else ""))
 
+    suspend fun transcriptionModel(): ModelSettings =
+        json.decodeFromString(get("/api/model"))
+
+    /** Rejected ids come back as a 400 whose message says why, so the caller
+     *  can show the worker's own reason rather than "failed". */
+    suspend fun setTranscriptionModel(model: String): ModelSettings =
+        json.decodeFromString(post("/api/model", """{"model":"$model"}"""))
+
     suspend fun archiveItem(itemId: Int) { post("/api/items/$itemId/archive", "{}") }
 
     suspend fun restoreItem(itemId: Int) { post("/api/items/$itemId/restore", "{}") }

@@ -34,6 +34,7 @@ import io.blurrycontour.monoglot.data.ContainerStat
 import io.blurrycontour.monoglot.data.DayTotal
 import io.blurrycontour.monoglot.data.Graph
 import io.blurrycontour.monoglot.data.Schedule
+import io.blurrycontour.monoglot.data.ModelSettings
 import io.blurrycontour.monoglot.data.SourceStats
 import io.blurrycontour.monoglot.data.SystemInfo
 import io.blurrycontour.monoglot.ui.util.RefreshWhenVisible
@@ -52,6 +53,11 @@ data class SystemState(
     val refreshing: Boolean = false,
     val schedules: List<Schedule> = emptyList(),
     val nextRun: String? = null,
+    val model: ModelSettings = ModelSettings(),
+    /** Set while a chosen model is being checked, and cleared by the answer.
+     *  Validating is a round trip to the worker, so it needs saying. */
+    val modelChecking: Boolean = false,
+    val modelError: String? = null,
 )
 
 class SystemViewModel(app: Application) : AndroidViewModel(app) {
@@ -94,6 +100,9 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
                     schedules = it.schedules, nextRun = it.nextRun,
                 )
             }
+            runCatching { repo.api.transcriptionModel() }.onSuccess {
+                _state.value = _state.value.copy(model = it)
+            }
             // This screen exists to show the container figures, and it always
             // has a spinner up while it loads, so it pays for a live sample
             // rather than showing the one taken before it was opened.
@@ -111,6 +120,33 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
                         info = null,
                     )
                 }
+        }
+    }
+
+    /**
+     * Stores a transcription model, once the server has agreed it is loadable.
+     *
+     * The check happens server-side, against the worker, before anything is
+     * written: an id that turns out to be a typo would otherwise not surface
+     * until the pipeline ran, as a stalled transcription in the middle of the
+     * night rather than as an answer to what was just typed.
+     */
+    fun setModel(id: String) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(modelChecking = true, modelError = null)
+            val result = runCatching { repo.api.setTranscriptionModel(id.trim()) }
+            _state.value = result.fold(
+                onSuccess = {
+                    _state.value.copy(
+                        model = _state.value.model.copy(model = it.model),
+                        modelChecking = false, modelError = null,
+                        message = "Transcribing with ${it.model} from the next episode",
+                    )
+                },
+                onFailure = {
+                    _state.value.copy(modelChecking = false, modelError = readableError(it))
+                },
+            )
         }
     }
 
@@ -310,7 +346,15 @@ fun SystemScreen(visible: Boolean = true) {
                         }
                     }
 
-                    // What gets fetched, then when it gets fetched.
+                    // What gets fetched, when it gets fetched, and with what.
+                    ModelCard(
+                        settings = state.model,
+                        checking = state.modelChecking,
+                        error = state.modelError,
+                        onChoose = { vm.setModel(it) },
+                    )
+
+
                     ScheduleCard(
                         schedules = state.schedules,
                         nextRun = state.nextRun,

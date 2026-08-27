@@ -39,13 +39,19 @@ class _DropHealthChecks(logging.Filter):
 
 logging.getLogger("uvicorn.access").addFilter(_DropHealthChecks())
 
-MODEL_NAME = os.getenv("WHISPER_MODEL", "KBLab/kb-whisper-small")
+# The model the API asks for when it names none, and the model this worker
+# falls back to. The API owns the choice — it is stored server-side and edited
+# from the app's System tab — so this is only what an unconfigured or
+# hand-driven request gets.
+DEFAULT_MODEL = "KBLab/kb-whisper-small"
 DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "5"))
+MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", "/models")
 
 app = FastAPI(title="monoglot-whisper-worker")
 _model = None
+_model_name = ""
 _model_lock = threading.Lock()
 _last_used = 0.0
 
@@ -59,33 +65,48 @@ IDLE_UNLOAD_SECONDS = int(os.getenv("WHISPER_IDLE_UNLOAD_SECONDS", "600"))
 _transcribe_lock = threading.Lock()
 
 
-def get_model() -> WhisperModel:
-    """Load the model once, lazily, on first use.
+def get_model(name: str = "") -> WhisperModel:
+    """Load the requested model, lazily, reusing the one already in memory.
+
+    A different name swaps: the API stores which model to use and sends it with
+    every request, so changing it in the app has to take effect on the next
+    transcription rather than on the next restart. The old weights are dropped
+    and the heap trimmed before the new ones are read, or a swap would briefly
+    hold both — which for medium is over a gigabyte that is never handed back.
 
     Loading counts as use. /warm otherwise left `_last_used` at zero, so the
     reaper measured idleness from the epoch and dropped the model on its next
     pass — warming paid for a load and threw it away 30 seconds later.
     """
-    global _model, _last_used
+    global _model, _model_name, _last_used
+    wanted = name or DEFAULT_MODEL
     _last_used = time.time()
-    if _model is None:
-        with _model_lock:
-            if _model is None:
-                log.info(
-                    "loading %s (device=%s compute_type=%s)",
-                    MODEL_NAME, DEVICE, COMPUTE_TYPE,
-                )
-                t0 = time.time()
-                # KBLab publishes CTranslate2 weights under the "main" revision
-                # of the same repo, which faster-whisper resolves directly from
-                # the model id. No special checkpoint path is needed.
-                _model = WhisperModel(
-                    MODEL_NAME,
-                    device=DEVICE,
-                    compute_type=COMPUTE_TYPE,
-                    download_root=os.getenv("MODEL_CACHE_DIR", "/models"),
-                )
-                log.info("model loaded in %.1fs", time.time() - t0)
+    if _model is not None and _model_name == wanted:
+        return _model
+    with _model_lock:
+        if _model is not None and _model_name == wanted:
+            return _model
+        if _model is not None:
+            log.info("switching from %s to %s", _model_name, wanted)
+            _model = None
+            gc.collect()
+            _trim_heap()
+        log.info(
+            "loading %s (device=%s compute_type=%s)",
+            wanted, DEVICE, COMPUTE_TYPE,
+        )
+        t0 = time.time()
+        # KBLab publishes CTranslate2 weights under the "main" revision
+        # of the same repo, which faster-whisper resolves directly from
+        # the model id. No special checkpoint path is needed.
+        _model = WhisperModel(
+            wanted,
+            device=DEVICE,
+            compute_type=COMPUTE_TYPE,
+            download_root=MODEL_CACHE_DIR,
+        )
+        _model_name = wanted
+        log.info("model loaded in %.1fs (rss %.0f MB)", time.time() - t0, _rss_mb())
     return _model
 
 
@@ -98,6 +119,14 @@ class TranscribeRequest(BaseModel):
     # ASR language hint, supplied per item by the API. Defaults to Swedish
     # since that is what this instance ships with.
     language: str = "sv"
+    # Which weights to use. Sent per request rather than configured here, so
+    # the choice lives in one place — the server's settings — and changing it
+    # needs no restart of this container.
+    model: str = ""
+
+
+class ValidateRequest(BaseModel):
+    model: str
 
 
 # Where the current transcription has got to, so the app can show a bar rather
@@ -154,7 +183,8 @@ def progress():
 def health():
     return {
         "status": "ok",
-        "model": MODEL_NAME,
+        "model": _model_name or DEFAULT_MODEL,
+        "default_model": DEFAULT_MODEL,
         "device": DEVICE,
         "compute_type": COMPUTE_TYPE,
         "loaded": _model is not None,
@@ -165,10 +195,69 @@ def health():
 
 
 @app.post("/warm")
-def warm():
+def warm(req: ValidateRequest | None = None):
     """Force model load, so the first real transcription is not also a download."""
-    get_model()
-    return {"status": "ok", "model": MODEL_NAME}
+    get_model(req.model if req else "")
+    return {"status": "ok", "model": _model_name}
+
+
+@app.post("/validate")
+def validate(req: ValidateRequest):
+    """Check that a model id names weights this worker could actually load.
+
+    Checked against the repository listing rather than by loading: medium is a
+    1.5GB download, and the point of validating is to answer before the user
+    commits to it. The two mistakes worth catching are a typo, which is a
+    missing repo, and a repo that holds only transformers weights — plenty of
+    Whisper checkpoints do, and faster-whisper cannot read them. Both show up
+    as the absence of a CTranslate2 model.bin.
+    """
+    name = req.model.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="no model given")
+
+    # An already-downloaded model is valid whatever the network says: it has
+    # been loaded here before, and validation must not fail because the box is
+    # offline.
+    local = os.path.join(MODEL_CACHE_DIR, "models--" + name.replace("/", "--"))
+    if os.path.isdir(local):
+        return {"status": "ok", "model": name, "cached": True}
+
+    try:
+        from huggingface_hub import HfApi
+        from huggingface_hub.utils import (
+            GatedRepoError,
+            RepositoryNotFoundError,
+        )
+    except ImportError as exc:  # pragma: no cover - the dependency is pinned
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    try:
+        files = {f.rfilename for f in HfApi().model_info(name, files_metadata=False).siblings}
+    except RepositoryNotFoundError as exc:
+        # A missing repo answers 401, not 404, so that a private one is
+        # indistinguishable from an absent one. Almost always a typo here.
+        raise HTTPException(
+            status_code=400, detail=f"no model called {name} on Hugging Face"
+        ) from exc
+    except GatedRepoError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"{name} is gated and this server has no token for it"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - any other failure is "cannot use it"
+        # First line only: these errors run to a dozen lines of request ids and
+        # authentication advice, and this string is shown in a card on a phone.
+        reason = str(exc).strip().splitlines()[0] or type(exc).__name__
+        raise HTTPException(
+            status_code=400, detail=f"cannot reach Hugging Face: {reason}"
+        ) from exc
+
+    if "model.bin" not in files:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{name} has no CTranslate2 model.bin — faster-whisper cannot load it",
+        )
+    return {"status": "ok", "model": name, "cached": False}
 
 
 @app.post("/transcribe")
@@ -177,7 +266,7 @@ def transcribe(req: TranscribeRequest):
         raise HTTPException(status_code=400, detail=f"no such file: {req.audio_path}")
 
     global _last_used
-    model = get_model()
+    model = get_model(req.model)
     _last_used = time.time()
     t0 = time.time()
 
@@ -264,7 +353,7 @@ def transcribe(req: TranscribeRequest):
     return {
         "language": info.language,
         "duration": round(float(info.duration), 3),
-        "model": MODEL_NAME,
+        "model": _model_name,
         "segments": out_segments,
     }
 
@@ -301,7 +390,7 @@ def _trim_heap() -> None:
 
 def _idle_reaper() -> None:
     """Drops the model after a period with no transcriptions."""
-    global _model
+    global _model, _model_name
     while True:
         time.sleep(30)
         if IDLE_UNLOAD_SECONDS <= 0 or _model is None:
@@ -317,12 +406,13 @@ def _idle_reaper() -> None:
                 continue
             try:
                 before = _rss_mb()
-                _model = None
+                unloaded, _model = _model_name, None
+                _model_name = ""
                 gc.collect()
                 _trim_heap()
                 log.info(
                     "idle for %.0fs, unloaded %s (rss %.0f -> %.0f MB)",
-                    idle, MODEL_NAME, before, _rss_mb(),
+                    idle, unloaded, before, _rss_mb(),
                 )
             finally:
                 _transcribe_lock.release()

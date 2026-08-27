@@ -42,6 +42,9 @@ type fakeWorker struct {
 	audioDelay time.Duration // how long each audio body takes to serve
 	dlNow      int           // downloads in flight
 	dlPeak     int           // the most that were ever in flight at once
+
+	rejectModel string   // a model id /validate refuses
+	models      []string // model ids seen on /transcribe, in order
 }
 
 func newFakeWorker() *fakeWorker {
@@ -102,14 +105,33 @@ func (f *fakeWorker) handler() http.Handler {
 		json.NewEncoder(w).Encode(map[string]any{"status": "ok", "running": running})
 	})
 
+	mux.HandleFunc("/validate", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Model string `json:"model"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		f.mu.Lock()
+		reject := f.rejectModel != "" && f.rejectModel == req.Model
+		f.mu.Unlock()
+		if reject {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"detail":"no CTranslate2 model.bin"}`))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "model": req.Model})
+	})
+
 	mux.HandleFunc("/transcribe", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			AudioPath string `json:"audio_path"`
 			Language  string `json:"language"`
+			Model     string `json:"model"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 
 		f.mu.Lock()
+		f.models = append(f.models, req.Model)
 		f.running[req.AudioPath] = true
 		f.started[req.AudioPath]++
 		delete(f.cancelled, req.AudioPath)

@@ -45,11 +45,15 @@ alias is still `svenska` and cannot change — it is baked into the key.
 
 `.env` is the only list of settings: compose hands the whole file to both
 services with `env_file`, so never add an `environment:` block. Defaults in Go
-match `.env.example` and exist only so the binary runs outside compose. The one
-exception is the ingest schedule, which lives in the `schedules` table and is
-edited from the app's System tab — a setting whose whole point is being changed
-without a file edit and a restart. A fresh server has no schedule and runs
-nothing unattended until somebody adds a time.
+match `.env.example` and exist only so the binary runs outside compose. The two
+exceptions are the ingest schedule, which lives in the `schedules` table, and
+the transcription model, which lives in `settings` — both edited from the app's
+System tab, both settings whose whole point is being changed without a file
+edit and a restart. A fresh server has no schedule and runs nothing unattended
+until somebody adds a time, and transcribes with `KBLab/kb-whisper-small` until
+told otherwise. The model id travels with every `/transcribe` call, so the
+worker swaps weights in memory rather than needing a restart; the API validates
+a chosen id against the worker's `/validate` before storing it.
 
 ## Traps
 

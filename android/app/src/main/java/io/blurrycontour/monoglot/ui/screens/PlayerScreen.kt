@@ -394,10 +394,22 @@ private fun FullView(vm: PlayerViewModel, state: io.blurrycontour.monoglot.playe
 private fun anchorOffset(state: LazyListState, index: Int, anchor: TranscriptAnchor): Int {
     if (anchor == TranscriptAnchor.TOP) return 0
     val info = state.layoutInfo
-    val viewport = info.viewportEndOffset - info.viewportStartOffset
-    if (viewport <= 0) return 0
-    val itemHeight = info.visibleItemsInfo.firstOrNull { it.index == index }?.size ?: 0
-    val room = (viewport - itemHeight).coerceAtLeast(0)
+    // The viewport spans the list's own padding as well as its content, and
+    // offset 0 already sits below the leading padding — so measuring against
+    // the raw viewport pushed the line a full padding's worth too low, and at
+    // Bottom that put it under the transport row.
+    val usable = (info.viewportEndOffset - info.viewportStartOffset) -
+        info.beforeContentPadding - info.afterContentPadding
+    if (usable <= 0) return 0
+    // A line being jumped to has not been measured yet, and treating it as
+    // zero-height at Bottom aligned its top with the bottom edge — scrolling
+    // it off the screen entirely. Neighbouring lines are the best estimate of
+    // how tall it is.
+    val visible = info.visibleItemsInfo
+    val height = visible.firstOrNull { it.index == index }?.size
+        ?: visible.map { it.size }.average().takeIf { !it.isNaN() }?.toInt()
+        ?: 0
+    val room = (usable - height).coerceAtLeast(0)
     return -(room * anchor.fraction).toInt()
 }
 

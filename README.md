@@ -23,7 +23,7 @@ said is the learning event.
 |---|---|
 | API | Go 1.26, chi, database/sql |
 | Database | SQLite (modernc.org/sqlite, pure Go) |
-| Transcription | Python + faster-whisper (CTranslate2), `KBLab/kb-whisper-small` |
+| Transcription | Python + faster-whisper (CTranslate2), `KBLab/kb-whisper-small` by default, chosen from the System tab |
 | Client | Native Android — Kotlin, Jetpack Compose, Material 3, Media3/ExoPlayer, Room |
 | Deployment | Docker Compose |
 
@@ -190,7 +190,9 @@ work on a bus with no signal.
 ## Measured on this instance
 
 - Lookup latency: **~1 ms** median (budget was 100 ms)
-- Transcription: **~3.3× realtime** on CPU with `kb-whisper-small` int8
+- Transcription: **~3.3× realtime** on CPU with `kb-whisper-small` int8 (the
+  default; a larger model is a choice on the System tab, at roughly its
+  parameter ratio in both time and memory)
 - Lemma resolution: **92.5%** of word tokens
 - Offline definition coverage: **90.1%** of word tokens per episode
 - SALDO: 1.04M inflected forms; Folkets: 36,876 lexemes
