@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,6 +28,7 @@ fun WordSheet(
     popup: WordPopup,
     onDismiss: () -> Unit,
     onStatus: (String, String) -> Unit,
+    onRemove: (String) -> Unit,
 ) {
     // Deliberately not skipPartiallyExpanded: at full height the sheet covered
     // the very sentence the word was tapped in, so the definition arrived with
@@ -122,7 +124,10 @@ fun WordSheet(
                         // the sheet stays put so the change can be seen, and
                         // corrected if it was the wrong chip.
                         val current = popup.statuses[candidate.lemma]
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             FilterChip(
                                 selected = current == "known",
                                 onClick = { onStatus(candidate.lemma, "known") },
@@ -139,6 +144,20 @@ fun WordSheet(
                                     Icon(Icons.Default.School, null, Modifier.size(16.dp))
                                 },
                             )
+                            Spacer(Modifier.weight(1f))
+                            // Every tap files the word automatically, so a
+                            // misclicked word needs a way back out. This drops
+                            // the whole vocabulary row; tapping the word again
+                            // would re-add it.
+                            OutlinedButton(onClick = { onRemove(candidate.lemma) }) {
+                                Icon(
+                                    Icons.Default.DeleteOutline,
+                                    null,
+                                    Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("Remove")
+                            }
                         }
                         HorizontalDivider(Modifier.padding(top = 14.dp))
                     }

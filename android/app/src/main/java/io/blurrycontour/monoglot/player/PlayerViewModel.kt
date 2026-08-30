@@ -367,6 +367,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { repo.setWordStatus(lemma, status) }
     }
 
+    /** Undo an accidental tap: every tap files the word automatically, so a
+     *  misclick needs a way to drop it from the bank again. */
+    fun removeWord(lemma: String) {
+        statuses = statuses - lemma
+        _state.value.popup?.let { popup ->
+            _state.value = _state.value.copy(
+                popup = popup.copy(statuses = popup.statuses - lemma))
+        }
+        viewModelScope.launch { repo.removeWord(lemma) }
+    }
+
     private fun showFinished() {
         _state.value = _state.value.copy(finishedVisible = true, completed = true)
         viewModelScope.launch {

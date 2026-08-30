@@ -62,7 +62,7 @@ private val SLOTS = mapOf(
     "vetenskap" to 2,
     "fof" to 3,
     "vetenskap_daglig" to 4,
-    "radio_sweden_latt" to 5,
+    "radio_sweden_latt" to 6,
 )
 
 /**

@@ -168,6 +168,7 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                     popup = popup,
                     onDismiss = { vm.dismissPopup() },
                     onStatus = { lemma, status -> vm.setWordStatus(lemma, status) },
+                    onRemove = { lemma -> vm.removeWord(lemma) },
                 )
             }
         }

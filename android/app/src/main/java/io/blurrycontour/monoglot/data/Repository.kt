@@ -108,6 +108,10 @@ class Repository(
         api.setWordStatus(lemma, status)
     }
 
+    suspend fun removeWord(lemma: String) = runCatching {
+        api.deleteWords(listOf(lemma))
+    }
+
     /**
      * Tap-to-define. Resolves from the in-memory bundle first; the network is
      * only touched when the bundle has no entry, which is what keeps the tap
