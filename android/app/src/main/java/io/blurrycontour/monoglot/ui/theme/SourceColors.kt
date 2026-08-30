@@ -10,7 +10,7 @@ import androidx.compose.ui.graphics.Color
  * Deliberately not drawn from the theme. These stand for *which source*, and a
  * source has to keep its colour when the theme or the accent changes — the dot
  * used to take `primary` for Klartext, so it became whatever accent was set,
- * while three of the five sources shared the border grey and were not
+ * while three of the original sources shared the border grey and were not
  * distinguishable from each other at all.
  *
  * Eight hues, two steps each: one selected for a light surface and one for a
@@ -62,6 +62,7 @@ private val SLOTS = mapOf(
     "vetenskap" to 2,
     "fof" to 3,
     "vetenskap_daglig" to 4,
+    "radio_sweden_latt" to 5,
 )
 
 /**
