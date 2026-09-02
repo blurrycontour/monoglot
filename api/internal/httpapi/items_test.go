@@ -52,9 +52,10 @@ func TestItemReportsWhenItWasDiscoveredNotAired(t *testing.T) {
 	}
 }
 
-// Archiving frees disk, it does not unhear the episode. The archive listing is
-// where a re-fetch is decided, so it has to carry the progress across — without
-// it the only record that you finished something is deleted along with its audio.
+// Archiving frees disk, it does not unhear the episode. A removed item stays
+// in the library view in its own date section, re-fetchable in place, so it has
+// to carry its progress across — without it the only record that you finished
+// something is deleted along with its audio.
 func TestArchivedItemKeepsItsProgress(t *testing.T) {
 	r := newRig(t)
 
@@ -70,15 +71,30 @@ func TestArchivedItemKeepsItsProgress(t *testing.T) {
 	var list struct {
 		Items []ItemSummary `json:"items"`
 	}
-	r.get("/api/items?status=archived", &list)
+	// It was fetched once, so it belongs in the library view, not the
+	// never-fetched back catalogue.
+	r.get("/api/items?status=library", &list)
 	if len(list.Items) != 1 {
-		t.Fatalf("want the archived item listed, got %d", len(list.Items))
+		t.Fatalf("want the removed item listed, got %d", len(list.Items))
 	}
 	got := list.Items[0]
+	if got.Status != "archived" {
+		t.Errorf("status = %q, want archived", got.Status)
+	}
 	if !got.Completed {
 		t.Error("completed lost on archive: the finished tick cannot be drawn")
 	}
 	if got.PositionMS != 900_000 {
 		t.Errorf("position_ms = %d, want 900000", got.PositionMS)
+	}
+
+	// And it must be absent from the back catalogue, which is only the
+	// episodes that were never fetched.
+	var archived struct {
+		Items []ItemSummary `json:"items"`
+	}
+	r.get("/api/items?status=archived", &archived)
+	if len(archived.Items) != 0 {
+		t.Fatalf("removed-after-fetch item leaked into the back catalogue: %d", len(archived.Items))
 	}
 }

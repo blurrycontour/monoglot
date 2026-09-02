@@ -42,3 +42,5 @@ __pycache__/
 
 # Local tool state
 .claude/settings.local.json
+
+AGENTS.md

@@ -22,7 +22,7 @@ class Repository(
      * unreachable, so the library is never empty on a train.
      */
     suspend fun items(source: String? = null): Result<List<ItemSummary>> = runCatching {
-        api.items(source)
+        api.items(source, status = "library")
     }.recoverCatching { networkError ->
         val local = offline.downloads.all().map {
             ItemSummary(

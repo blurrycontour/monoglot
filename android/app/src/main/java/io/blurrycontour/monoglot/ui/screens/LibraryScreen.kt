@@ -374,18 +374,16 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Frees the server's copy. The item stays in the library and can be
-     *  fetched again; nothing is permanently lost. */
+    /** Frees the server's copy. The item stays in the library, in its own date
+     *  section, and can be fetched again; nothing is permanently lost. */
     fun archive(item: ItemSummary) {
         viewModelScope.launch {
             _state.value = _state.value.copy(busyIds = _state.value.busyIds + item.id)
             runCatching { repo.api.archiveItem(item.id) }
             runCatching { repo.removeDownload(item.id) }
+            // A removed item comes back as archived in the same list, kept in
+            // place by the refresh; it no longer drops into the back catalogue.
             refresh()
-            // It is in the archive now. If that section is open, it has to
-            // appear there at once and in date order, or the episode simply
-            // vanishes and gets fetched again later by mistake.
-            reloadArchived(extra = 1)
             _state.value = _state.value.copy(busyIds = _state.value.busyIds - item.id)
         }
     }
@@ -466,8 +464,9 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                 // it. Without shrinking the high-water mark the banner kept
                 // the old total and counted the cancellation as progress.
                 batchTotal = (_state.value.batchTotal - 1).coerceAtLeast(0),
-                // It is back in the archive now, so it must stop looking like
-                // a fetch still in flight if it reappears under "Not fetched".
+                // It is back to archived now, so it must stop looking like a
+                // fetch still in flight when its card reappears — inline in its
+                // date section if it was fetched before, else the back catalogue.
                 fetchingIds = _state.value.fetchingIds - itemId,
             )
             refreshMeta()
@@ -493,6 +492,11 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                 // back. The banner and the queue sheet track it from here.
                 archived = if (queued) _state.value.archived.filterNot { it.id == item.id }
                            else _state.value.archived,
+                // Same for a removed item fetched from its own date section:
+                // once queued it is no longer archived, so drop the in-place
+                // card and let the queue banner carry it until it is ready.
+                items = if (queued) _state.value.items.filterNot { it.id == item.id }
+                        else _state.value.items,
                 fetchingIds = _state.value.fetchingIds - item.id,
             )
             refreshMetaPublic()
@@ -653,7 +657,17 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
                         Dates.groupItems(shown).forEach { (header, groupItems) ->
                             stickyHeader(key = "h-$header") { SectionHeader(header, groupItems.size) }
                             items(groupItems, key = { it.id }) { item ->
-                                EpisodeCard(
+                                // A removed episode stays in its own date
+                                // section, shown as re-fetchable in place rather
+                                // than being exiled to the back catalogue.
+                                if (item.status == "archived") {
+                                    ArchivedCard(
+                                        item = item,
+                                        busy = item.id in state.fetchingIds,
+                                        onFetch = { vm.fetch(item) },
+                                        modifier = Modifier.animateItem(),
+                                    )
+                                } else EpisodeCard(
                                     item = item,
                                     group = header,
                                     sourceFiltered = state.sourceFilter != null,
@@ -675,7 +689,7 @@ fun LibraryScreen(onOpen: (Int) -> Unit, visible: Boolean = true) {
 
                         if (state.archived.isNotEmpty()) {
                             stickyHeader(key = "h-notfetched") {
-                                SectionHeader("Not fetched", state.archived.size)
+                                SectionHeader("Back catalogue", state.archived.size)
                             }
                             items(state.archived, key = { "a-${it.id}" }) { item ->
                                 ArchivedCard(

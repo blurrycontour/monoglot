@@ -316,7 +316,9 @@ func (s *Server) archive(r *http.Request, id int) error {
 		return err
 	}
 	_, err := s.pool.ExecContext(r.Context(), `
-		UPDATE items SET status='archived', audio_path=NULL, error=NULL WHERE id=?`, id)
+		UPDATE items SET status='archived', audio_path=NULL, error=NULL,
+		       fetched_at=COALESCE(fetched_at, strftime('%Y-%m-%d %H:%M:%S','now'))
+		WHERE id=?`, id)
 	return err
 }
 

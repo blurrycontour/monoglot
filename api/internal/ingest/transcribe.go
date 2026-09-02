@@ -348,7 +348,9 @@ func persist(ctx context.Context, pool *sql.DB, itemID int, lang string, tr *Tra
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE items SET status='ready', error=NULL WHERE id=?`, itemID); err != nil {
+		`UPDATE items SET status='ready', error=NULL,
+		        fetched_at=COALESCE(fetched_at, strftime('%Y-%m-%d %H:%M:%S','now'))
+		 WHERE id=?`, itemID); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

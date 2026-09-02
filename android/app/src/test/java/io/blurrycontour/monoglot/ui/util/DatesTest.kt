@@ -18,6 +18,7 @@ class DatesTest {
     fun `groups by recency`() {
         assertEquals("Today", Dates.group(at(2026, 8, 23), today))
         assertEquals("Yesterday", Dates.group(at(2026, 8, 22), today))
+        assertEquals("Day before yesterday", Dates.group(at(2026, 8, 21), today))
         assertEquals("This week", Dates.group(at(2026, 8, 18), today))
         assertEquals("Last week", Dates.group(at(2026, 8, 12), today))
         assertEquals("This month", Dates.group(at(2026, 8, 2), today))
@@ -55,7 +56,7 @@ class DatesTest {
             item(4, null),
         )
         val grouped = Dates.groupItems(items, today)
-        assertEquals(listOf("Today", "Yesterday", "This week", "Undated"), grouped.map { it.first })
+        assertEquals(listOf("Today", "Yesterday", "Day before yesterday", "Undated"), grouped.map { it.first })
         assertEquals(items.size, grouped.sumOf { it.second.size })
     }
 

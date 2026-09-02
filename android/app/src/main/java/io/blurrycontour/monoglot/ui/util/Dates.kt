@@ -32,6 +32,7 @@ object Dates {
             days < 0L -> "Upcoming"
             days == 0L -> "Today"
             days == 1L -> "Yesterday"
+            days == 2L -> "Day before yesterday"
             days < 7L -> "This week"
             days < 14L -> "Last week"
             date.year == today.year && date.month == today.month -> "This month"
@@ -67,7 +68,7 @@ object Dates {
      * has just read in the header above.
      */
     fun groupNamesTheDay(group: String): Boolean =
-        group == "Today" || group == "Yesterday"
+        group == "Today" || group == "Yesterday" || group == "Day before yesterday"
 
     /** Time of day the episode aired, in the reader's own zone. */
     fun time(published: OffsetDateTime?): String =

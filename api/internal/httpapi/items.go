@@ -4,10 +4,11 @@ import (
 	"database/sql"
 
 	"errors"
-	"github.com/blurrycontour/monoglot/api/internal/db"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/blurrycontour/monoglot/api/internal/db"
 )
 
 type ItemSummary struct {
@@ -40,6 +41,29 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
+	// The library and its back catalogue are two views split by one fact:
+	// whether the episode was ever fetched. "library" is what a reader sees in
+	// date order — everything ready, plus what they fetched and later removed,
+	// still in its own section and re-fetchable in place. "archived" is the
+	// rest: episodes the server knows of but never fetched, revealed on demand.
+	var cond string
+	var condArgs []any
+	switch status {
+	case "library":
+		cond = "(i.status = 'ready' OR (i.status = 'archived' AND i.fetched_at IS NOT NULL))"
+	case "archived":
+		cond = "(i.status = 'archived' AND i.fetched_at IS NULL)"
+	case "all":
+		cond = "1 = 1"
+	default:
+		cond = "i.status = ?"
+		condArgs = append(condArgs, status)
+	}
+
+	args := []any{}
+	args = append(args, condArgs...)
+	args = append(args, source, source, limit, offset)
+
 	rows, err := s.pool.QueryContext(r.Context(), `
 		SELECT i.id, s.slug, s.name, i.title, COALESCE(i.description,''),
 		       i.published_at, i.created_at, COALESCE(i.duration_ms,0), i.status,
@@ -48,10 +72,10 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		FROM items i
 		JOIN sources s ON s.id = i.source_id
 		LEFT JOIN progress p ON p.item_id = i.id
-		WHERE (? = 'all' OR i.status = ?)
+		WHERE `+cond+`
 		  AND (? = '' OR s.slug = ?)
 		ORDER BY i.published_at DESC NULLS LAST, i.id DESC
-		LIMIT ? OFFSET ?`, status, status, source, source, limit, offset)
+		LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		serverError(w, err)
 		return
