@@ -69,8 +69,13 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
 
     val textScale by Graph.repository.settings.textScaleFlow.collectAsState(initial = 1f)
     var volumeSheet by remember { mutableStateOf(false) }
+    var textSizeSheet by remember { mutableStateOf(false) }
 
-    CompositionLocalProvider(LocalTranscriptScale provides textScale) {
+    // Global × per-episode once the episode has loaded; the settings flow keeps
+    // it live before then so a size change lands even on the loading screen.
+    val effectiveScale = if (state.bundle != null) state.effectiveTextScale else textScale
+
+    CompositionLocalProvider(LocalTranscriptScale provides effectiveScale) {
     Scaffold(
         // contentColorFor(Transparent) is Unspecified, which leaves
         // LocalContentColor at its black default. Every piece of unstyled text
@@ -145,6 +150,9 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                             contentDescription = "Volume",
                         )
                     }
+                    IconButton(onClick = { textSizeSheet = true }) {
+                        Icon(Icons.Default.FormatSize, contentDescription = "Text size")
+                    }
                     EpisodeActionsMenu(
                         downloaded = state.isDownloaded,
                         hasProgress = state.positionMs > 0 || state.completed,
@@ -210,6 +218,15 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
             onGlobal = { vm.setGlobalVolume(it) },
             onEpisode = { vm.setEpisodeVolume(it) },
             onDismiss = { volumeSheet = false },
+        )
+    }
+    if (textSizeSheet) {
+        TextSizeSheet(
+            global = state.globalTextScale,
+            episode = state.episodeTextScale,
+            onGlobal = { vm.setGlobalTextScale(it) },
+            onEpisode = { vm.setEpisodeTextScale(it) },
+            onDismiss = { textSizeSheet = false },
         )
     }
     }
@@ -566,5 +583,70 @@ private fun VolumeSlider(label: String, value: Float, onChange: (Float) -> Unit)
         // 0, 50, 100, 150, 200 — a detent at 100% so the source-as-recorded
         // setting is easy to land back on.
         steps = 39,
+    )
+}
+
+/**
+ * Reading text size, per app and per episode, the two multiplied like volume.
+ * The preview is the transcript style itself at the effective size, since a
+ * percentage says nothing about how a sentence will actually read.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TextSizeSheet(
+    global: Float,
+    episode: Float,
+    onGlobal: (Float) -> Unit,
+    onEpisode: (Float) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(horizontal = 22.dp).padding(bottom = 30.dp)) {
+            Text(
+                "Text size",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(12.dp))
+            TextScaleSlider("App text size", global, onGlobal)
+            Spacer(Modifier.height(8.dp))
+            TextScaleSlider("This episode", episode, onEpisode)
+            Spacer(Modifier.height(10.dp))
+            val effective = (global * episode).coerceIn(0.8f, 1.6f)
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "Han lyssnade på nyheterna varje morgon.",
+                    style = TranscriptStyle.copy(
+                        fontSize = TranscriptStyle.fontSize * effective,
+                        lineHeight = TranscriptStyle.lineHeight * effective,
+                    ),
+                    modifier = Modifier.padding(14.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TextScaleSlider(label: String, value: Float, onChange: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(
+            "${(value * 100).toInt()}%",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    // 0.8×–1.6×, matching the store's clamp, in tidy 10% stops.
+    Slider(
+        value = value,
+        onValueChange = onChange,
+        valueRange = 0.8f..1.6f,
+        steps = 7,
     )
 }

@@ -49,10 +49,17 @@ data class PlayerState(
     val globalVolume: Float = 1.0f,
     /** Per-episode volume trim, multiplied onto the global one. */
     val episodeVolume: Float = 1.0f,
+    /** App-wide reading text size; 1.0 is the design size. */
+    val globalTextScale: Float = 1.0f,
+    /** Per-episode text-size trim, multiplied onto the global one. */
+    val episodeTextScale: Float = 1.0f,
 ) {
     /** What actually reaches the player: the two trims multiplied, capped at
      *  the boost ceiling the service can deliver. */
     val effectiveVolume: Float get() = (globalVolume * episodeVolume).coerceIn(0f, 2f)
+
+    /** Reading size actually applied, kept inside the legible band. */
+    val effectiveTextScale: Float get() = (globalTextScale * episodeTextScale).coerceIn(0.8f, 1.6f)
 }
 
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
@@ -117,6 +124,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 mediaUri = repo.mediaUri(itemId)
                 val globalVol = repo.settings.globalVolumeFlow.first()
                 val episodeVol = repo.settings.episodeVolumeFlow(itemId).first()
+                val globalText = repo.settings.textScaleFlow.first()
+                val episodeText = repo.settings.episodeTextScaleFlow(itemId).first()
                 _state.value = _state.value.copy(
                     loading = false,
                     bundle = bundle,
@@ -127,6 +136,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     completed = bundle.item.completed,
                     globalVolume = globalVol,
                     episodeVolume = episodeVol,
+                    globalTextScale = globalText,
+                    episodeTextScale = episodeText,
                 )
                 PlaybackHolder.setVolume(_state.value.effectiveVolume)
 
@@ -258,6 +269,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         if (itemId > 0) viewModelScope.launch { repo.settings.setEpisodeVolume(itemId, v) }
     }
 
+    fun setGlobalTextScale(v: Float) {
+        _state.value = _state.value.copy(globalTextScale = v)
+        viewModelScope.launch { repo.settings.setTextScale(v) }
+    }
+
+    fun setEpisodeTextScale(v: Float) {
+        _state.value = _state.value.copy(episodeTextScale = v)
+        if (itemId > 0) viewModelScope.launch { repo.settings.setEpisodeTextScale(itemId, v) }
+    }
+
     /**
      * Hands the episode back starting at this word, from the lookup sheet.
      *
@@ -278,15 +299,39 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * Plays just this word, pulled straight from the episode audio.
      *
      * A clipped region on a throwaway player: it never touches the main
-     * session's position and is never written down. Padded a little at the end
-     * so the final consonant is not clipped off.
+     * session's position and is never written down. The clip is kept prepared,
+     * so tapping "Hear word" again replays it instantly rather than re-reading
+     * and re-clipping the source.
+     *
+     * Three things keep the word clean: the clip is clamped so it can never
+     * cross into the neighbouring words (the main cause of bleed on fast, short
+     * words), a short volume fade softens each edge, and it plays a little below
+     * speed so a brief word is easier to catch.
      */
     fun previewWord(token: Token) {
         val uri = mediaUri ?: return
-        val start = token.startMs.coerceAtLeast(0)
-        val end = (if (token.endMs > token.startMs) token.endMs else token.startMs + 400) + 120
         val player = previewPlayer ?: androidx.media3.exoplayer.ExoPlayer.Builder(getApplication())
             .build().also { previewPlayer = it }
+        // Same word as last time: the clip is still loaded, so just replay it.
+        if (token.id == lastPreviewTokenId && player.mediaItemCount > 0) {
+            player.seekTo(0)
+            player.volume = 0f
+            player.play()
+            runFadeEnvelope(player, lastPreviewClipMs)
+            return
+        }
+
+        // Clamp to the neighbouring tokens so an adjacent word can never be
+        // included, whatever the Whisper timestamps say.
+        val tokens = index?.tokens
+        val i = tokens?.indexOfFirst { it.id == token.id } ?: -1
+        val prevEnd = tokens?.getOrNull(i - 1)?.endMs ?: 0
+        val nextStart = tokens?.getOrNull(i + 1)?.startMs ?: Int.MAX_VALUE
+        val start = token.startMs.coerceAtLeast(prevEnd).coerceAtLeast(0)
+        val rawEnd = if (token.endMs > token.startMs) token.endMs else token.startMs + 300
+        var end = rawEnd.coerceAtMost(nextStart)
+        if (end <= start) end = start + 150
+
         val item = androidx.media3.common.MediaItem.Builder()
             .setUri(uri)
             .setClippingConfiguration(
@@ -296,13 +341,47 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     .build()
             )
             .build()
+        lastPreviewTokenId = token.id
+        lastPreviewClipMs = end - start
         player.setMediaItem(item)
+        player.playbackParameters = androidx.media3.common.PlaybackParameters(PREVIEW_SPEED)
+        player.volume = 0f
         player.prepare()
         player.play()
+        runFadeEnvelope(player, lastPreviewClipMs)
+    }
+
+    /** The word currently loaded in the preview player, so a repeat tap can
+     *  replay it without rebuilding the clip. */
+    private var lastPreviewTokenId: Int = -1
+    private var lastPreviewClipMs: Int = 0
+    private var fadeJob: kotlinx.coroutines.Job? = null
+
+    /** Ramps the preview volume up at the start and down before the end, so the
+     *  word does not begin or end on an abrupt chop of a neighbour. */
+    private fun runFadeEnvelope(player: androidx.media3.exoplayer.ExoPlayer, clipSourceMs: Int) {
+        fadeJob?.cancel()
+        fadeJob = viewModelScope.launch {
+            val wall = (clipSourceMs / PREVIEW_SPEED).toLong().coerceAtLeast(1)
+            val fade = minOf(30L, wall / 3)
+            val steps = 6
+            for (s in 0..steps) {
+                player.volume = s / steps.toFloat()
+                if (fade > 0) kotlinx.coroutines.delay(fade / steps)
+            }
+            player.volume = 1f
+            kotlinx.coroutines.delay((wall - 2 * fade).coerceAtLeast(0))
+            for (s in steps downTo 0) {
+                player.volume = s / steps.toFloat()
+                if (fade > 0) kotlinx.coroutines.delay(fade / steps)
+            }
+        }
     }
 
     private fun stopPreview() {
+        fadeJob?.cancel()
         previewPlayer?.run { stop(); clearMediaItems() }
+        lastPreviewTokenId = -1
     }
 
     fun cycleTranscriptMode() {
@@ -518,8 +597,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // the holder owns the controller so the mini player survives this
         // screen being popped.
         PlaybackHolder.observePosition(null)
+        fadeJob?.cancel()
         previewPlayer?.release()
         previewPlayer = null
         super.onCleared()
+    }
+
+    private companion object {
+        /** Word previews play a little under speed: a short word is easier to
+         *  catch, and it is a single word so the lower pitch does not matter. */
+        const val PREVIEW_SPEED = 0.75f
     }
 }

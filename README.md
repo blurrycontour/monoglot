@@ -18,10 +18,11 @@ instantly, and replay the sentence. That gap between what you heard and what was
 said is the learning event.
 
 Tapping a word also plays it back straight from the episode audio, and the
-lookup sheet can hand playback back starting from that word. Reading text size,
-an app-wide volume and a per-episode volume trim (which can boost a quietly
-mixed source without turning the phone up) are on the Settings and player
-screens; while the expanded player is open and playing, the screen stays awake.
+lookup sheet can hand playback back starting from that word. Reading text size
+and volume each have an app-wide default (Settings) and a per-episode trim
+(buttons on the player), so a quietly mixed source can be boosted without
+turning the phone up. While the expanded player is open and playing, the screen
+stays awake.
 
 ## Stack
 

@@ -56,6 +56,7 @@ data class SettingsState(
     val transcriptMode: TranscriptMode = TranscriptMode.HIDDEN,
     val transcriptAnchor: TranscriptAnchor = TranscriptAnchor.MIDDLE,
     val textScale: Float = 1.0f,
+    val globalVolume: Float = 1.0f,
     val sources: List<SourceRow> = emptyList(),
     val message: String? = null,
     val connection: Connection = Connection.UNKNOWN,
@@ -83,6 +84,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 transcriptMode = repo.settings.transcriptModeFlow.first(),
                 transcriptAnchor = repo.settings.transcriptAnchorFlow.first(),
                 textScale = repo.settings.textScaleFlow.first(),
+                globalVolume = repo.settings.globalVolumeFlow.first(),
                 offlineBytes = repo.offline.totalBytes(),
                 offlineCount = repo.offline.downloads.all().size,
             )
@@ -142,6 +144,12 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun setTextScale(v: Float) {
         viewModelScope.launch { repo.settings.setTextScale(v) }
         _state.value = _state.value.copy(textScale = v)
+    }
+
+    fun setGlobalVolume(v: Float) {
+        viewModelScope.launch { repo.settings.setGlobalVolume(v) }
+        _state.value = _state.value.copy(globalVolume = v)
+        PlaybackHolder.setVolume(v)
     }
 
     fun toggleSource(source: SourceRow) {
@@ -382,6 +390,9 @@ fun SettingsScreen(visible: Boolean = true) {
 
                 Spacer(Modifier.height(14.dp))
                 TextSizeSetting(state.textScale) { vm.setTextScale(it) }
+
+                Spacer(Modifier.height(14.dp))
+                VolumeSetting(state.globalVolume) { vm.setGlobalVolume(it) }
             }
 
             // Downloaded audio is on this phone, so it is configured here
@@ -445,6 +456,31 @@ private fun TextSizeSetting(scale: Float, onChange: (Float) -> Unit) {
             modifier = Modifier.padding(14.dp),
         )
     }
+}
+
+/**
+ * App-wide playback volume. The per-episode trim lives on the player screen,
+ * next to the audio it adjusts.
+ */
+@Composable
+private fun VolumeSetting(volume: Float, onChange: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("App volume", style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f))
+        Text(
+            "${(volume * 100).toInt()}%",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    // 0–200%: above 100% boosts a quietly-mixed source without the phone.
+    Slider(
+        value = volume,
+        onValueChange = onChange,
+        valueRange = 0f..2f,
+        steps = 39,
+    )
 }
 
 /**

@@ -71,6 +71,7 @@ class SettingsStore(private val context: Context) {
         val TEXT_SCALE = floatPreferencesKey("text_scale")
         val GLOBAL_VOLUME = floatPreferencesKey("global_volume")
         val EPISODE_VOLUMES = stringPreferencesKey("episode_volumes")
+        val EPISODE_TEXT_SCALES = stringPreferencesKey("episode_text_scales")
     }
 
     /** Reading text size, as a multiplier on the transcript style. Clamped to a
@@ -119,6 +120,26 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit { it[Keys.TEXT_SCALE] = scale.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE) }
     }
 
+    /**
+     * Per-episode text-size trims, keyed by item id, multiplied onto the global
+     * size the same way per-episode volume is. Only non-default entries stored.
+     */
+    val episodeTextScalesFlow: Flow<Map<Int, Float>> = pref { prefs ->
+        parseEpisodeFloats(prefs[Keys.EPISODE_TEXT_SCALES] ?: "")
+    }
+
+    fun episodeTextScaleFlow(itemId: Int): Flow<Float> =
+        pref { prefs -> parseEpisodeFloats(prefs[Keys.EPISODE_TEXT_SCALES] ?: "")[itemId] ?: 1.0f }
+
+    suspend fun setEpisodeTextScale(itemId: Int, v: Float) {
+        val clamped = v.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
+        context.dataStore.edit { prefs ->
+            val map = parseEpisodeFloats(prefs[Keys.EPISODE_TEXT_SCALES] ?: "").toMutableMap()
+            if (kotlin.math.abs(clamped - 1.0f) < 0.001f) map.remove(itemId) else map[itemId] = clamped
+            prefs[Keys.EPISODE_TEXT_SCALES] = map.entries.joinToString("\n") { "${it.key}=${it.value}" }
+        }
+    }
+
     /** App-wide playback volume, applied on top of the per-episode multiplier. */
     val globalVolumeFlow: Flow<Float> = pref {
         (it[Keys.GLOBAL_VOLUME] ?: 1.0f).coerceIn(MIN_VOLUME, MAX_VOLUME)
@@ -134,16 +155,16 @@ class SettingsStore(private val context: Context) {
      * with a line for every episode ever opened.
      */
     val episodeVolumesFlow: Flow<Map<Int, Float>> = pref { prefs ->
-        parseEpisodeVolumes(prefs[Keys.EPISODE_VOLUMES] ?: "")
+        parseEpisodeFloats(prefs[Keys.EPISODE_VOLUMES] ?: "")
     }
 
     fun episodeVolumeFlow(itemId: Int): Flow<Float> =
-        pref { prefs -> parseEpisodeVolumes(prefs[Keys.EPISODE_VOLUMES] ?: "")[itemId] ?: 1.0f }
+        pref { prefs -> parseEpisodeFloats(prefs[Keys.EPISODE_VOLUMES] ?: "")[itemId] ?: 1.0f }
 
     suspend fun setEpisodeVolume(itemId: Int, v: Float) {
         val clamped = v.coerceIn(MIN_VOLUME, MAX_VOLUME)
         context.dataStore.edit { prefs ->
-            val map = parseEpisodeVolumes(prefs[Keys.EPISODE_VOLUMES] ?: "").toMutableMap()
+            val map = parseEpisodeFloats(prefs[Keys.EPISODE_VOLUMES] ?: "").toMutableMap()
             // A default trim is the absence of a trim: drop it rather than
             // recording a line that says "unchanged".
             if (kotlin.math.abs(clamped - 1.0f) < 0.001f) map.remove(itemId) else map[itemId] = clamped
@@ -151,7 +172,7 @@ class SettingsStore(private val context: Context) {
         }
     }
 
-    private fun parseEpisodeVolumes(raw: String): Map<Int, Float> =
+    private fun parseEpisodeFloats(raw: String): Map<Int, Float> =
         raw.lineSequence().mapNotNull { line ->
             val id = line.substringBefore('=', "").trim().toIntOrNull() ?: return@mapNotNull null
             val v = line.substringAfter('=', "").trim().toFloatOrNull() ?: return@mapNotNull null

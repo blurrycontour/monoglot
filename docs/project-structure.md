@@ -83,7 +83,8 @@ app/src/main/java/io/blurrycontour/monoglot/
       LibraryScreen.kt       Listen tab: date-grouped list, ArchivedCard,
                              back-catalogue reveal.
       PlayerScreen.kt        Expanded player; transcript views; SentenceText;
-                             VolumeSheet; keep-screen-on.
+                             VolumeSheet + TextSizeSheet (per-episode trims);
+                             keep-screen-on.
       PlayerControls.kt      Transport, speed/transcript sheets, scrubber.
       WordSheet.kt           Tap-to-define bottom sheet; hear-word / play-from-here.
       SettingsScreen.kt      Settings tab (server, appearance, playback, text
