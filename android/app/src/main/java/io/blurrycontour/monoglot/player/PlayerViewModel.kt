@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import io.blurrycontour.monoglot.data.Bundle
 import io.blurrycontour.monoglot.data.Candidate
@@ -54,6 +55,10 @@ data class PlayerState(
     val globalTextScale: Float = 1.0f,
     /** Per-episode text-size trim, multiplied onto the global one. */
     val episodeTextScale: Float = 1.0f,
+    /** True while the tapped word's episode clip is sounding. */
+    val wordPreviewPlaying: Boolean = false,
+    /** True while the system voice is speaking the tapped word. */
+    val wordSpeaking: Boolean = false,
 ) {
     /** What actually reaches the player: the two trims multiplied, capped at
      *  the boost ceiling the service can deliver. */
@@ -320,7 +325,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun previewWord(token: Token) {
         val uri = mediaUri ?: return
         val player = previewPlayer ?: androidx.media3.exoplayer.ExoPlayer.Builder(getApplication())
-            .build().also { previewPlayer = it }
+            .build().also {
+                // Drives the "playing" state the sheet animates its icon from.
+                it.addListener(object : androidx.media3.common.Player.Listener {
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        _state.value = _state.value.copy(wordPreviewPlaying = isPlaying)
+                    }
+                })
+                previewPlayer = it
+            }
         // Same word as last time: the clip is still loaded, so just replay it.
         if (token.id == lastPreviewTokenId && player.mediaItemCount > 0) {
             player.seekTo(0)
@@ -375,23 +388,32 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private var lastPreviewClipMs: Int = 0
     private var fadeJob: kotlinx.coroutines.Job? = null
 
-    /** Ramps the preview volume up at the start and down before the end, so the
-     *  word does not begin or end on an abrupt chop of a neighbour. */
+    /**
+     * Ramps the preview volume up at the start and down before the end, so the
+     * word does not begin or end on an abrupt chop of a neighbour.
+     *
+     * Driven off the player's real position, not a wall-clock timer: the first
+     * play has to buffer, so a timer started at the call would fade out before
+     * the audio had caught up and clip the word — which is exactly why the
+     * first tap sounded shorter than the replay. Position tracks the audio,
+     * whether it is buffering or already loaded.
+     */
     private fun runFadeEnvelope(player: androidx.media3.exoplayer.ExoPlayer, clipSourceMs: Int) {
         fadeJob?.cancel()
         fadeJob = viewModelScope.launch {
-            val wall = (clipSourceMs / PREVIEW_SPEED).toLong().coerceAtLeast(1)
-            val fade = minOf(30L, wall / 3)
-            val steps = 6
-            for (s in 0..steps) {
-                player.volume = s / steps.toFloat()
-                if (fade > 0) kotlinx.coroutines.delay(fade / steps)
-            }
-            player.volume = 1f
-            kotlinx.coroutines.delay((wall - 2 * fade).coerceAtLeast(0))
-            for (s in steps downTo 0) {
-                player.volume = s / steps.toFloat()
-                if (fade > 0) kotlinx.coroutines.delay(fade / steps)
+            val fade = minOf(30, clipSourceMs / 3).toLong().coerceAtLeast(1)
+            while (isActive) {
+                val ended = player.playbackState == androidx.media3.common.Player.STATE_ENDED
+                val pos = player.currentPosition
+                val remaining = clipSourceMs - pos
+                player.volume = when {
+                    ended || remaining <= 0 -> 0f
+                    pos < fade -> (pos / fade.toFloat())
+                    remaining < fade -> (remaining / fade.toFloat())
+                    else -> 1f
+                }.coerceIn(0f, 1f)
+                if (ended || remaining <= 0) break
+                kotlinx.coroutines.delay(10)
             }
         }
     }
@@ -416,6 +438,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 ttsReady = true
             }
         }
+        // Drives the "speaking" state the sheet animates its voice icon from.
+        tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {
+                _state.value = _state.value.copy(wordSpeaking = true)
+            }
+            override fun onDone(utteranceId: String?) {
+                _state.value = _state.value.copy(wordSpeaking = false)
+            }
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String?) {
+                _state.value = _state.value.copy(wordSpeaking = false)
+            }
+        })
     }
 
     /** Speaks the tapped word with the system Swedish voice. The episode clip
@@ -498,7 +533,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun dismissPopup() {
-        _state.value = _state.value.copy(popup = null)
+        // The word audio belongs to the open sheet: stop both so an icon is
+        // never left animating over a definition that is no longer showing.
+        stopPreview()
+        runCatching { tts?.stop() }
+        _state.value = _state.value.copy(popup = null, wordPreviewPlaying = false, wordSpeaking = false)
         if (pausedForPopup) {
             pausedForPopup = false
             PlaybackHolder.play()

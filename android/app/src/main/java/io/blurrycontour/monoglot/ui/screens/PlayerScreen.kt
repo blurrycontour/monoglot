@@ -207,6 +207,8 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                     onPlayFromHere = { vm.playFromWord(popup.token) },
                     onHearWord = { vm.previewWord(popup.token) },
                     onSpeak = { vm.speakWord(popup.token) },
+                    hearing = state.wordPreviewPlaying,
+                    speaking = state.wordSpeaking,
                 )
             }
         }

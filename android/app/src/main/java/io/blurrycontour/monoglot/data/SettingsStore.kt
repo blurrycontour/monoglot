@@ -35,8 +35,8 @@ enum class TranscriptAnchor(val label: String, val fraction: Float) {
  *  always reachable from the lookup sheet; this only sets which one is
  *  automatic on tap. */
 enum class WordAudioSource(val label: String) {
-    EPISODE("Episode audio"),
-    SPOKEN("Spoken"),
+    EPISODE("Episode"),
+    SPOKEN("TTS"),
 }
 
 enum class TranscriptMode {

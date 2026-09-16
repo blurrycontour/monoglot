@@ -16,7 +16,9 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -411,6 +413,14 @@ fun SettingsScreen(visible: Boolean = true) {
                             selected = state.wordTapSource == s,
                             onClick = { vm.setWordTapSource(s) },
                             shape = SegmentedButtonDefaults.itemShape(i, WordAudioSource.entries.size),
+                            icon = {
+                                Icon(
+                                    if (s == WordAudioSource.EPISODE) Icons.Default.GraphicEq
+                                    else Icons.Default.RecordVoiceOver,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            },
                         ) { Text(s.label) }
                     }
                 }

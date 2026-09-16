@@ -1,5 +1,10 @@
 package io.blurrycontour.monoglot.ui.screens
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -14,6 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontStyle
@@ -37,6 +43,8 @@ fun WordSheet(
     onPlayFromHere: () -> Unit,
     onHearWord: () -> Unit,
     onSpeak: () -> Unit,
+    hearing: Boolean,
+    speaking: Boolean,
 ) {
     // Deliberately not skipPartiallyExpanded: at full height the sheet covered
     // the very sentence the word was tapped in, so the definition arrived with
@@ -70,10 +78,16 @@ fun WordSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 FilledTonalIconButton(onClick = onHearWord) {
-                    Icon(Icons.Default.VolumeUp, "Hear word from the episode", Modifier.size(20.dp))
+                    Icon(
+                        Icons.Default.VolumeUp, "Hear word from the episode",
+                        Modifier.size(20.dp).scale(pulse(hearing)),
+                    )
                 }
                 FilledTonalIconButton(onClick = onSpeak) {
-                    Icon(Icons.Default.RecordVoiceOver, "Speak the word", Modifier.size(20.dp))
+                    Icon(
+                        Icons.Default.RecordVoiceOver, "Speak the word",
+                        Modifier.size(20.dp).scale(pulse(speaking)),
+                    )
                 }
                 FilledTonalButton(onClick = onPlayFromHere) {
                     Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
@@ -209,6 +223,20 @@ fun WordSheet(
             }
         }
     }
+}
+
+/** A gently pulsing scale while a sound is playing, so the icon that started it
+ *  reads as active rather than a dead button. 1.0 when idle. */
+@Composable
+private fun pulse(active: Boolean): Float {
+    val transition = rememberInfiniteTransition(label = "pulse")
+    val scale by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.18f,
+        animationSpec = infiniteRepeatable(tween(420), RepeatMode.Reverse),
+        label = "scale",
+    )
+    return if (active) scale else 1f
 }
 
 /** Folkets uses compact Swedish word-class tags. */
