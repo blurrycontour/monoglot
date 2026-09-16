@@ -7,12 +7,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -33,6 +36,7 @@ fun WordSheet(
     onRemove: (String) -> Unit,
     onPlayFromHere: () -> Unit,
     onHearWord: () -> Unit,
+    onSpeak: () -> Unit,
 ) {
     // Deliberately not skipPartiallyExpanded: at full height the sheet covered
     // the very sentence the word was tapped in, so the definition arrived with
@@ -57,13 +61,19 @@ fun WordSheet(
             )
 
             Spacer(Modifier.height(12.dp))
-            // The word plays itself the moment the sheet opens; these repeat it
-            // and, respectively, hand the episode back starting from this word.
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = onHearWord) {
-                    Icon(Icons.Default.VolumeUp, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Hear word")
+            // The word plays itself the moment the sheet opens; the two icons
+            // repeat it — from the episode audio, then a clean reference with
+            // the system Swedish voice — and the button hands the episode back
+            // starting from this word. Icons keep the whole row on one line.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilledTonalIconButton(onClick = onHearWord) {
+                    Icon(Icons.Default.VolumeUp, "Hear word from the episode", Modifier.size(20.dp))
+                }
+                FilledTonalIconButton(onClick = onSpeak) {
+                    Icon(Icons.Default.RecordVoiceOver, "Speak the word", Modifier.size(20.dp))
                 }
                 FilledTonalButton(onClick = onPlayFromHere) {
                     Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
@@ -144,13 +154,19 @@ fun WordSheet(
                         // the sheet stays put so the change can be seen, and
                         // corrected if it was the wrong chip.
                         val current = popup.statuses[candidate.lemma]
+                        val haptics = LocalHapticFeedback.current
+                        // Removing files nothing on screen but the chips, which
+                        // is too quiet to read as "done": a local flag flips the
+                        // button to a disabled "Removed" the instant it is tapped,
+                        // reset the moment the word is filed again.
+                        var justRemoved by remember(candidate.lemma) { mutableStateOf(false) }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             FilterChip(
                                 selected = current == "known",
-                                onClick = { onStatus(candidate.lemma, "known") },
+                                onClick = { justRemoved = false; onStatus(candidate.lemma, "known") },
                                 label = { Text("Known") },
                                 leadingIcon = {
                                     Icon(Icons.Default.Check, null, Modifier.size(16.dp))
@@ -158,7 +174,7 @@ fun WordSheet(
                             )
                             FilterChip(
                                 selected = current == "learning",
-                                onClick = { onStatus(candidate.lemma, "learning") },
+                                onClick = { justRemoved = false; onStatus(candidate.lemma, "learning") },
                                 label = { Text("Learning") },
                                 leadingIcon = {
                                     Icon(Icons.Default.School, null, Modifier.size(16.dp))
@@ -169,14 +185,22 @@ fun WordSheet(
                             // misclicked word needs a way back out. This drops
                             // the whole vocabulary row; tapping the word again
                             // would re-add it.
-                            OutlinedButton(onClick = { onRemove(candidate.lemma) }) {
+                            OutlinedButton(
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onRemove(candidate.lemma)
+                                    justRemoved = true
+                                },
+                                enabled = !justRemoved,
+                            ) {
                                 Icon(
-                                    Icons.Default.DeleteOutline,
+                                    if (justRemoved) Icons.Default.Check
+                                    else Icons.Default.DeleteOutline,
                                     null,
                                     Modifier.size(16.dp),
                                 )
                                 Spacer(Modifier.width(4.dp))
-                                Text("Remove")
+                                Text(if (justRemoved) "Removed" else "Remove")
                             }
                         }
                         HorizontalDivider(Modifier.padding(top = 14.dp))

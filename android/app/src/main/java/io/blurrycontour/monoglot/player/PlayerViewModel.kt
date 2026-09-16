@@ -322,14 +322,20 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         // Clamp to the neighbouring tokens so an adjacent word can never be
-        // included, whatever the Whisper timestamps say.
+        // included, whatever the Whisper timestamps say — then pad outward
+        // within that gap, so a slightly-early or -late boundary does not shear
+        // the word's own onset or tail. The padding only ever eats the silence
+        // between words, never the words themselves.
         val tokens = index?.tokens
         val i = tokens?.indexOfFirst { it.id == token.id } ?: -1
         val prevEnd = tokens?.getOrNull(i - 1)?.endMs ?: 0
         val nextStart = tokens?.getOrNull(i + 1)?.startMs ?: Int.MAX_VALUE
-        val start = token.startMs.coerceAtLeast(prevEnd).coerceAtLeast(0)
-        val rawEnd = if (token.endMs > token.startMs) token.endMs else token.startMs + 300
-        var end = rawEnd.coerceAtMost(nextStart)
+        val rawEnd0 = if (token.endMs > token.startMs) token.endMs else token.startMs + 300
+        val start = (token.startMs - CLIP_LEAD_MS).coerceAtLeast(prevEnd).coerceAtLeast(0)
+        // A generous tail: Whisper's word-end timestamps run early far more
+        // often than late, so the last consonant was routinely being cut. Still
+        // clamped to the next word, so it only ever borrows the gap after it.
+        var end = (rawEnd0 + CLIP_TRAIL_MS).coerceAtMost(nextStart)
         if (end <= start) end = start + 150
 
         val item = androidx.media3.common.MediaItem.Builder()
@@ -382,6 +388,36 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         fadeJob?.cancel()
         previewPlayer?.run { stop(); clearMediaItems() }
         lastPreviewTokenId = -1
+    }
+
+    /** Android's on-device TTS, for a clean reference pronunciation next to the
+     *  real episode audio. Built on first use; Swedish voice data must be
+     *  installed on the device, otherwise this is a silent no-op. */
+    private var tts: android.speech.tts.TextToSpeech? = null
+    @Volatile private var ttsReady = false
+
+    private fun ensureTts() {
+        if (tts != null) return
+        tts = android.speech.tts.TextToSpeech(getApplication()) { status ->
+            if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                tts?.language = java.util.Locale("sv", "SE")
+                ttsReady = true
+            }
+        }
+    }
+
+    /** Speaks the tapped word with the system Swedish voice. The episode clip
+     *  is what was actually said; this is the idealised citation form beside it. */
+    fun speakWord(token: Token) {
+        ensureTts()
+        val text = token.surface.trim().ifBlank { return }
+        viewModelScope.launch {
+            var tries = 0
+            while (!ttsReady && tries < 50) { kotlinx.coroutines.delay(20); tries++ }
+            if (ttsReady) {
+                tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "word-${token.id}")
+            }
+        }
     }
 
     fun cycleTranscriptMode() {
@@ -600,12 +636,21 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         fadeJob?.cancel()
         previewPlayer?.release()
         previewPlayer = null
+        tts?.shutdown()
+        tts = null
         super.onCleared()
     }
 
     private companion object {
         /** Word previews play a little under speed: a short word is easier to
          *  catch, and it is a single word so the lower pitch does not matter. */
-        const val PREVIEW_SPEED = 0.75f
+        const val PREVIEW_SPEED = 0.85f
+
+        /** Breathing room added to each edge of a word clip, inside the clamp to
+         *  its neighbours, so an imprecise timestamp does not shear the word.
+         *  The tail is longer because Whisper ends words early far more than
+         *  late. */
+        const val CLIP_LEAD_MS = 70
+        const val CLIP_TRAIL_MS = 200
     }
 }

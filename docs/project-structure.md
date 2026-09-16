@@ -77,7 +77,8 @@ app/src/main/java/io/blurrycontour/monoglot/
     PlaybackService.kt       MediaSessionService + ExoPlayer; notification;
                              sentence-skip commands; LoudnessEnhancer volume.
     PlayerViewModel.kt       Player screen state; tap-to-define; word-audio
-                             preview player; volume; play-from-word.
+                             preview player (clamped clip) + system TTS; volume;
+                             play-from-word.
   ui/
     screens/
       LibraryScreen.kt       Listen tab: date-grouped list, ArchivedCard,

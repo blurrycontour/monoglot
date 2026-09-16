@@ -206,6 +206,7 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                     onRemove = { lemma -> vm.removeWord(lemma) },
                     onPlayFromHere = { vm.playFromWord(popup.token) },
                     onHearWord = { vm.previewWord(popup.token) },
+                    onSpeak = { vm.speakWord(popup.token) },
                 )
             }
         }

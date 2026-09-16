@@ -3,6 +3,21 @@
 Personal, single-user Swedish listening-comprehension app, self-hosted in a
 homelab. `NOT-BUILDING.md` lists what was deliberately turned down, and why.
 
+## Reference docs
+
+Read these before working, and keep them current:
+
+- **[docs/project-structure.md](docs/project-structure.md)** — the file/package
+  map. Read it first to navigate the codebase.
+- **[README.md](README.md)** — human-facing overview, stack, and operations.
+- **This file (AGENTS.md)** — the project architecture and traps below.
+
+**After every code change, update these incrementally in the same change** so
+they never drift: adjust `docs/project-structure.md` when files or packages move
+or gain a new responsibility, this file when the architecture or an invariant
+changes, and `README.md` when user-facing behaviour, setup, or stack changes.
+Reference these docs only from here — do not point to them from source files.
+
 ## The one idea
 
 Audio is primary; the transcript is a crutch revealed on demand. Listen, fail to
@@ -99,6 +114,11 @@ a chosen id against the worker's `/validate` before storing it.
   battery in ten hours.
 - Range requests on the audio endpoint are mandatory: use `http.ServeFile`.
 - SALDO multiword lemmas are filtered at import; they balloon `forms`.
+- **Volume above 100% is a gain effect bound to the audio session**, not the
+  controller's own volume (which only attenuates). It does not survive a new
+  load, so `PlaybackHolder.prepare` re-sends the volume and the service
+  re-applies it on `STATE_READY`. Tap-to-hear plays on a throwaway player so it
+  never moves the resume position and is never written down.
 
 ## Multi-language
 
@@ -117,3 +137,4 @@ Attribution for Sveriges Radio, 8 Sidor, Folkets lexikon (CC BY-SA 2.5), SALDO
 
 ## Deployment
 There is a local dev instance running here, and is rebuilt after chat completions (via Stop hook). Prod instance uses the image built in Github CI.
+ALWAYS make modular commits and work in a branch for major features/fixes.
