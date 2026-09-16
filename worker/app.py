@@ -11,6 +11,7 @@ import ctypes
 import gc
 import logging
 import os
+import stat
 import threading
 import time
 
@@ -207,14 +208,28 @@ def storage():
 
     They live in a Docker volume the API cannot see, so the API asks here and
     folds the figure into the System screen's storage breakdown.
+
+    The Hugging Face cache keeps the real weights in blobs/ and points to them
+    from snapshots/ with symlinks, so following every path double-counts the
+    bytes. Symlinks are skipped and hardlinks deduped by inode, so each blob is
+    counted once — the figure then matches the volume's real size.
     """
     total = 0
+    seen: set[tuple[int, int]] = set()
     for root, _dirs, files in os.walk(MODEL_CACHE_DIR):
         for name in files:
+            path = os.path.join(root, name)
             try:
-                total += os.path.getsize(os.path.join(root, name))
+                st = os.lstat(path)
             except OSError:
-                pass
+                continue
+            if stat.S_ISLNK(st.st_mode):
+                continue
+            key = (st.st_dev, st.st_ino)
+            if key in seen:
+                continue
+            seen.add(key)
+            total += st.st_size
     return {"model_bytes": total}
 
 
