@@ -1176,7 +1176,14 @@ private fun ArchivedCard(
             if (busy) {
                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             } else {
-                FilledTonalButton(onClick = onFetch, modifier = Modifier.height(36.dp)) {
+                // Tight content padding: the default leaves a wide dead margin
+                // either side of a two-word label, which made the card's action
+                // look far heavier than it is.
+                FilledTonalButton(
+                    onClick = onFetch,
+                    modifier = Modifier.height(36.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                ) {
                     Icon(Icons.Default.CloudDownload, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Fetch", style = MaterialTheme.typography.labelMedium)

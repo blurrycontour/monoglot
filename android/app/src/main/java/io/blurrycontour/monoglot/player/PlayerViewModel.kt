@@ -45,7 +45,15 @@ data class PlayerState(
     val finished: EpisodeSummary? = null,
     val finishedVisible: Boolean = false,
     val busy: Boolean = false,
-)
+    /** App-wide volume multiplier; 1.0 is the source as recorded. */
+    val globalVolume: Float = 1.0f,
+    /** Per-episode volume trim, multiplied onto the global one. */
+    val episodeVolume: Float = 1.0f,
+) {
+    /** What actually reaches the player: the two trims multiplied, capped at
+     *  the boost ceiling the service can deliver. */
+    val effectiveVolume: Float get() = (globalVolume * episodeVolume).coerceIn(0f, 2f)
+}
 
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -57,6 +65,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private var index: TokenIndex? = null
     private var itemId: Int = -1
     private var pausedForPopup = false
+
+    /** The episode's audio source, captured on load so the word-preview player
+     *  and any later use do not each need a suspend round trip. */
+    private var mediaUri: String? = null
+
+    /** Plays a single word pulled straight from the episode audio, so a tap can
+     *  be heard as well as read. Deliberately separate from the main session:
+     *  it must not move the resume position or write anything down, and it is
+     *  never saved. Built once, on first use. */
+    private var previewPlayer: androidx.media3.exoplayer.ExoPlayer? = null
 
     /** Whether playback has been somewhere other than the very end since this
      *  episode was opened. Without it, reopening a finished episode resumes at
@@ -96,6 +114,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 loadStatuses()
                 val mode = repo.settings.transcriptModeFlow.first()
                 val speed = repo.settings.speedFlow.first()
+                mediaUri = repo.mediaUri(itemId)
+                val globalVol = repo.settings.globalVolumeFlow.first()
+                val episodeVol = repo.settings.episodeVolumeFlow(itemId).first()
                 _state.value = _state.value.copy(
                     loading = false,
                     bundle = bundle,
@@ -104,14 +125,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     speed = speed,
                     isDownloaded = repo.isDownloaded(itemId),
                     completed = bundle.item.completed,
+                    globalVolume = globalVol,
+                    episodeVolume = episodeVol,
                 )
+                PlaybackHolder.setVolume(_state.value.effectiveVolume)
 
                 PlaybackHolder.connect(getApplication()) {
                     viewModelScope.launch {
                         PlaybackHolder.prepare(
                             context = getApplication(),
                             itemId = itemId,
-                            uri = repo.mediaUri(itemId),
+                            uri = mediaUri ?: repo.mediaUri(itemId),
                             title = bundle.item.title,
                             source = bundle.item.sourceName,
                             durationMs = bundle.item.durationMs,
@@ -222,6 +246,65 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { repo.settings.setSpeed(speed) }
     }
 
+    fun setGlobalVolume(v: Float) {
+        _state.value = _state.value.copy(globalVolume = v)
+        PlaybackHolder.setVolume(_state.value.effectiveVolume)
+        viewModelScope.launch { repo.settings.setGlobalVolume(v) }
+    }
+
+    fun setEpisodeVolume(v: Float) {
+        _state.value = _state.value.copy(episodeVolume = v)
+        PlaybackHolder.setVolume(_state.value.effectiveVolume)
+        if (itemId > 0) viewModelScope.launch { repo.settings.setEpisodeVolume(itemId, v) }
+    }
+
+    /**
+     * Hands the episode back starting at this word, from the lookup sheet.
+     *
+     * Unlike a tap-dismiss, which resumes wherever it paused, this resumes at
+     * the word — the "I want to hear this bit again from here" action. The
+     * sheet closes and the tap-pause flag is cleared so dismissal does not then
+     * seek back.
+     */
+    fun playFromWord(token: Token) {
+        pausedForPopup = false
+        _state.value = _state.value.copy(popup = null)
+        stopPreview()
+        PlaybackHolder.seekTo(token.startMs)
+        PlaybackHolder.play()
+    }
+
+    /**
+     * Plays just this word, pulled straight from the episode audio.
+     *
+     * A clipped region on a throwaway player: it never touches the main
+     * session's position and is never written down. Padded a little at the end
+     * so the final consonant is not clipped off.
+     */
+    fun previewWord(token: Token) {
+        val uri = mediaUri ?: return
+        val start = token.startMs.coerceAtLeast(0)
+        val end = (if (token.endMs > token.startMs) token.endMs else token.startMs + 400) + 120
+        val player = previewPlayer ?: androidx.media3.exoplayer.ExoPlayer.Builder(getApplication())
+            .build().also { previewPlayer = it }
+        val item = androidx.media3.common.MediaItem.Builder()
+            .setUri(uri)
+            .setClippingConfiguration(
+                androidx.media3.common.MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(start.toLong())
+                    .setEndPositionMs(end.toLong())
+                    .build()
+            )
+            .build()
+        player.setMediaItem(item)
+        player.prepare()
+        player.play()
+    }
+
+    private fun stopPreview() {
+        previewPlayer?.run { stop(); clearMediaItems() }
+    }
+
     fun cycleTranscriptMode() {
         setTranscriptMode(
             when (_state.value.transcriptMode) {
@@ -255,6 +338,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             pausedForPopup = true
             PlaybackHolder.pause()
         }
+
+        // Hear the word as well as read it, straight from the episode audio.
+        previewWord(token)
 
         val bundle = _state.value.bundle
         val inline = bundle?.definitions?.get(token.normalized)
@@ -432,6 +518,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // the holder owns the controller so the mini player survives this
         // screen being popped.
         PlaybackHolder.observePosition(null)
+        previewPlayer?.release()
+        previewPlayer = null
         super.onCleared()
     }
 }

@@ -45,6 +45,7 @@ import io.blurrycontour.monoglot.ui.theme.ACCENTS
 import io.blurrycontour.monoglot.ui.theme.ALL_THEMES
 import io.blurrycontour.monoglot.ui.theme.AppTheme
 import io.blurrycontour.monoglot.ui.theme.themeById
+import io.blurrycontour.monoglot.ui.theme.TranscriptStyle
 import io.blurrycontour.monoglot.ui.util.RefreshWhenVisible
 import io.blurrycontour.monoglot.ui.util.formatBytesShort
 
@@ -54,6 +55,7 @@ data class SettingsState(
     val speed: Float = 1.0f,
     val transcriptMode: TranscriptMode = TranscriptMode.HIDDEN,
     val transcriptAnchor: TranscriptAnchor = TranscriptAnchor.MIDDLE,
+    val textScale: Float = 1.0f,
     val sources: List<SourceRow> = emptyList(),
     val message: String? = null,
     val connection: Connection = Connection.UNKNOWN,
@@ -80,6 +82,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 speed = repo.settings.speedFlow.first(),
                 transcriptMode = repo.settings.transcriptModeFlow.first(),
                 transcriptAnchor = repo.settings.transcriptAnchorFlow.first(),
+                textScale = repo.settings.textScaleFlow.first(),
                 offlineBytes = repo.offline.totalBytes(),
                 offlineCount = repo.offline.downloads.all().size,
             )
@@ -134,6 +137,11 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun setAnchor(a: TranscriptAnchor) {
         viewModelScope.launch { repo.settings.setTranscriptAnchor(a) }
         _state.value = _state.value.copy(transcriptAnchor = a)
+    }
+
+    fun setTextScale(v: Float) {
+        viewModelScope.launch { repo.settings.setTextScale(v) }
+        _state.value = _state.value.copy(textScale = v)
     }
 
     fun toggleSource(source: SourceRow) {
@@ -371,6 +379,9 @@ fun SettingsScreen(visible: Boolean = true) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+
+                Spacer(Modifier.height(14.dp))
+                TextSizeSetting(state.textScale) { vm.setTextScale(it) }
             }
 
             // Downloaded audio is on this phone, so it is configured here
@@ -392,6 +403,47 @@ fun SettingsScreen(visible: Boolean = true) {
             AboutSection()
             Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+/**
+ * Reading text size, with the transcript style itself as the preview: a number
+ * or an abstract slider says nothing about how a sentence will read on the
+ * player screen, which is the only place this size is used.
+ */
+@Composable
+private fun TextSizeSetting(scale: Float, onChange: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Reading text size", style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f))
+        Text(
+            "${(scale * 100).toInt()}%",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    // 0.8×–1.6×, matching SettingsStore's clamp, in tidy 10% stops.
+    Slider(
+        value = scale,
+        onValueChange = onChange,
+        valueRange = 0.8f..1.6f,
+        steps = 7,
+    )
+    Spacer(Modifier.height(4.dp))
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            "Han lyssnade på nyheterna varje morgon.",
+            style = TranscriptStyle.copy(
+                fontSize = TranscriptStyle.fontSize * scale,
+                lineHeight = TranscriptStyle.lineHeight * scale,
+            ),
+            modifier = Modifier.padding(14.dp),
+        )
     }
 }
 

@@ -2,6 +2,7 @@ package io.blurrycontour.monoglot.player
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.media.audiofx.LoudnessEnhancer
 import android.os.Bundle
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -31,6 +32,41 @@ class PlaybackService : MediaSessionService() {
     private var retries = 0
 
     /**
+     * Boosts a quietly-mixed source above what the controller's own volume can
+     * do, which is attenuation only. Bound to the ExoPlayer's audio session and
+     * kept for the life of the player; the requested volume is remembered so it
+     * survives a new load, whose session id may differ.
+     */
+    private var loudness: LoudnessEnhancer? = null
+    private var loudnessSession = 0
+    private var pendingVolume = 1.0f
+
+    /**
+     * Applies the effective volume by splitting it: attenuation is the player's
+     * own volume, gain above unity is a loudness effect measured in millibels
+     * (200% ≈ +10 dB). The effect is created lazily against the current audio
+     * session and re-created if that session has changed under it.
+     */
+    private fun applyVolume(volume: Float) {
+        pendingVolume = volume
+        val player = mediaSession?.player as? ExoPlayer ?: return
+        player.volume = volume.coerceIn(0f, 1f)
+
+        val session = player.audioSessionId
+        if (session == C.AUDIO_SESSION_ID_UNSET) return
+        if (loudness == null || loudnessSession != session) {
+            runCatching { loudness?.release() }
+            loudness = runCatching { LoudnessEnhancer(session) }.getOrNull()
+            loudnessSession = session
+        }
+        val gainMb = (((volume - 1f).coerceAtLeast(0f)) * 1000).toInt()
+        runCatching {
+            loudness?.setTargetGain(gainMb)
+            loudness?.setEnabled(gainMb > 0)
+        }
+    }
+
+    /**
      * Recovery from a failed load.
      *
      * Nothing handled player errors at all, so any failure was terminal:
@@ -57,7 +93,12 @@ class PlaybackService : MediaSessionService() {
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             // A successful load clears the budget for the next failure.
-            if (playbackState == Player.STATE_READY) retries = 0
+            if (playbackState == Player.STATE_READY) {
+                retries = 0
+                // The audio session only exists once something is loaded, so a
+                // volume set before then had nowhere to attach: re-apply it.
+                applyVolume(pendingVolume)
+            }
         }
     }
 
@@ -169,6 +210,7 @@ class PlaybackService : MediaSessionService() {
                 .add(SessionCommand(CMD_FORWARD, Bundle.EMPTY))
                 .add(SessionCommand(CMD_PREV_SENTENCE, Bundle.EMPTY))
                 .add(SessionCommand(CMD_NEXT_SENTENCE, Bundle.EMPTY))
+                .add(SessionCommand(PlaybackHolder.CMD_SET_VOLUME, Bundle.EMPTY))
                 .build()
 
             val accepted = MediaSession.ConnectionResult.AcceptedResultBuilder(session)
@@ -210,6 +252,8 @@ class PlaybackService : MediaSessionService() {
                 CMD_FORWARD -> player.seekTo(player.currentPosition + SKIP_MS)
                 CMD_PREV_SENTENCE -> seekSentence(player, back = true)
                 CMD_NEXT_SENTENCE -> seekSentence(player, back = false)
+                PlaybackHolder.CMD_SET_VOLUME ->
+                    applyVolume(args.getFloat(PlaybackHolder.EXTRA_VOLUME, 1.0f))
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
@@ -247,6 +291,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        runCatching { loudness?.release() }
+        loudness = null
         mediaSession?.run {
             player.release()
             release()

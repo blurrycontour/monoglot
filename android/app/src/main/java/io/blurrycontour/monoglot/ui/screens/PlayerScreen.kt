@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -40,8 +41,10 @@ import io.blurrycontour.monoglot.data.Graph
 import io.blurrycontour.monoglot.data.TranscriptAnchor
 import io.blurrycontour.monoglot.data.TranscriptMode
 import io.blurrycontour.monoglot.player.PlayerViewModel
+import io.blurrycontour.monoglot.ui.theme.LocalTranscriptScale
 import io.blurrycontour.monoglot.ui.theme.TranscriptStyle
 import io.blurrycontour.monoglot.ui.util.Dates
+import androidx.compose.runtime.CompositionLocalProvider
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,6 +57,20 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
     // Write the current position back before the library reappears.
     DisposableEffect(Unit) { onDispose { vm.flushProgress() } }
 
+    // Keep the screen awake while this episode plays and the player is open:
+    // the point is to glance at the transcript across a room while cooking, so
+    // the screen must not lock mid-sentence. Cleared the moment playback pauses
+    // or the player is left, so it never holds the screen on in the background.
+    val view = LocalView.current
+    DisposableEffect(state.isPlaying) {
+        view.keepScreenOn = state.isPlaying
+        onDispose { view.keepScreenOn = false }
+    }
+
+    val textScale by Graph.repository.settings.textScaleFlow.collectAsState(initial = 1f)
+    var volumeSheet by remember { mutableStateOf(false) }
+
+    CompositionLocalProvider(LocalTranscriptScale provides textScale) {
     Scaffold(
         // contentColorFor(Transparent) is Unspecified, which leaves
         // LocalContentColor at its black default. Every piece of unstyled text
@@ -118,6 +135,16 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                             Modifier.size(18.dp).padding(end = 4.dp), strokeWidth = 2.dp,
                         )
                     }
+                    IconButton(onClick = { volumeSheet = true }) {
+                        Icon(
+                            when {
+                                state.effectiveVolume <= 0.01f -> Icons.Default.VolumeOff
+                                state.effectiveVolume > 1.01f -> Icons.Default.VolumeUp
+                                else -> Icons.Default.VolumeDown
+                            },
+                            contentDescription = "Volume",
+                        )
+                    }
                     EpisodeActionsMenu(
                         downloaded = state.isDownloaded,
                         hasProgress = state.positionMs > 0 || state.completed,
@@ -169,9 +196,22 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                     onDismiss = { vm.dismissPopup() },
                     onStatus = { lemma, status -> vm.setWordStatus(lemma, status) },
                     onRemove = { lemma -> vm.removeWord(lemma) },
+                    onPlayFromHere = { vm.playFromWord(popup.token) },
+                    onHearWord = { vm.previewWord(popup.token) },
                 )
             }
         }
+    }
+
+    if (volumeSheet) {
+        VolumeSheet(
+            global = state.globalVolume,
+            episode = state.episodeVolume,
+            onGlobal = { vm.setGlobalVolume(it) },
+            onEpisode = { vm.setEpisodeVolume(it) },
+            onDismiss = { volumeSheet = false },
+        )
+    }
     }
 }
 
@@ -439,6 +479,13 @@ private fun SentenceText(
     } else {
         MaterialTheme.colorScheme.onSurface
     }
+    // Reader-chosen size, applied to both the glyphs and the line box so tall
+    // text does not clip against its neighbours above and below.
+    val scale = LocalTranscriptScale.current
+    val style = TranscriptStyle.copy(
+        fontSize = TranscriptStyle.fontSize * scale,
+        lineHeight = TranscriptStyle.lineHeight * scale,
+    )
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -449,7 +496,7 @@ private fun SentenceText(
             // as each word came up when the sentence sat near the wrap point.
             Text(
                 text = token.surface,
-                style = TranscriptStyle,
+                style = style,
                 color = if (isActive) MaterialTheme.colorScheme.primary else base,
                 modifier = Modifier
                     .clip(RoundedCornerShape(5.dp))
@@ -462,4 +509,62 @@ private fun SentenceText(
             )
         }
     }
+}
+
+/**
+ * Volume, per app and per episode. Two trims that multiply: the global one sets
+ * a comfortable baseline, the per-episode one rescues a source that was mixed
+ * quiet without having to reach for the phone's own volume — which, on
+ * headphones, is a hazard when a call or an alarm arrives at the same setting.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VolumeSheet(
+    global: Float,
+    episode: Float,
+    onGlobal: (Float) -> Unit,
+    onEpisode: (Float) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(horizontal = 22.dp).padding(bottom = 30.dp)) {
+            Text(
+                "Volume",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Above 100% boosts a quietly-mixed source without turning the " +
+                    "phone up. The two multiply.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            VolumeSlider("App volume", global, onGlobal)
+            Spacer(Modifier.height(8.dp))
+            VolumeSlider("This episode", episode, onEpisode)
+        }
+    }
+}
+
+@Composable
+private fun VolumeSlider(label: String, value: Float, onChange: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(
+            "${(value * 100).toInt()}%",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    Slider(
+        value = value,
+        onValueChange = onChange,
+        valueRange = 0f..2f,
+        // 0, 50, 100, 150, 200 — a detent at 100% so the source-as-recorded
+        // setting is easy to land back on.
+        steps = 39,
+    )
 }

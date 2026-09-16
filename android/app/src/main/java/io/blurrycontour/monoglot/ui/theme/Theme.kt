@@ -38,6 +38,9 @@ import kotlin.math.sin
 /** The active theme, so screens can react to ornament and shape choices. */
 val LocalAppTheme = staticCompositionLocalOf { themeById("black") }
 
+/** Reader-chosen multiplier on transcript text size. 1.0 is the design size. */
+val LocalTranscriptScale = staticCompositionLocalOf { 1f }
+
 /** Transcript text is large and generously spaced: it is read in motion, on a
  *  phone, by someone who is also listening. */
 val TranscriptStyle = TextStyle(
@@ -406,4 +409,3 @@ private fun DrawScope.drawOrnament(
         }
     }
 }
-

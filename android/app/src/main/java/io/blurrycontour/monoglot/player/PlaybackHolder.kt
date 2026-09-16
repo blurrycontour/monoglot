@@ -376,6 +376,9 @@ object PlaybackHolder {
         scope.launch {
             io.blurrycontour.monoglot.data.Graph.repository.settings.setLastItem(itemId)
         }
+        // A gain effect is bound to the audio session, which a new load can
+        // replace; put the reader's volume back rather than reverting to unity.
+        if (switching) setVolume(lastVolume)
     }
 
     fun playPause() {
@@ -414,6 +417,32 @@ object PlaybackHolder {
         controller?.playbackParameters = PlaybackParameters(speed)
         _now.value = _now.value.copy(speed = speed)
     }
+
+    /**
+     * Effective playback volume, where 1.0 is the source as recorded.
+     *
+     * Attenuation is the controller's own volume; anything above 1.0 has to be
+     * a gain applied inside the service, on the ExoPlayer's audio session,
+     * because a MediaController's volume caps at unity. The whole value is
+     * handed across and the service decides how to split it, so the two ends
+     * never disagree about what 150% means. Re-sent after every prepare(),
+     * since a gain effect does not survive a new audio session.
+     */
+    fun setVolume(effective: Float) {
+        lastVolume = effective
+        val c = controller ?: return
+        val args = android.os.Bundle().apply { putFloat(EXTRA_VOLUME, effective) }
+        c.sendCustomCommand(
+            androidx.media3.session.SessionCommand(CMD_SET_VOLUME, android.os.Bundle.EMPTY),
+            args,
+        )
+    }
+
+    /** Last requested volume, replayed after a prepare() re-creates the session. */
+    private var lastVolume = 1.0f
+
+    const val CMD_SET_VOLUME = "io.blurrycontour.monoglot.SET_VOLUME"
+    const val EXTRA_VOLUME = "volume"
 
     /** Clears playback entirely, dismissing the mini player. */
     fun stop() {

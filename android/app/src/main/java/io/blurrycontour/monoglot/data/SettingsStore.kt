@@ -68,7 +68,21 @@ class SettingsStore(private val context: Context) {
         val SERVER_EPOCH = intPreferencesKey("server_epoch")
         val LISTEN_SEEN_AT = stringPreferencesKey("listen_seen_at")
         val KNOWN_SERVERS = stringPreferencesKey("known_servers")
+        val TEXT_SCALE = floatPreferencesKey("text_scale")
+        val GLOBAL_VOLUME = floatPreferencesKey("global_volume")
+        val EPISODE_VOLUMES = stringPreferencesKey("episode_volumes")
     }
+
+    /** Reading text size, as a multiplier on the transcript style. Clamped to a
+     *  legible band: below 0.8 the line is hard to catch in motion, above 1.6
+     *  it reflows to a word or two per line. */
+    val MIN_TEXT_SCALE = 0.8f
+    val MAX_TEXT_SCALE = 1.6f
+
+    /** Playback volume, as a multiplier. 1.0 is the source as recorded; below
+     *  attenuates, above boosts a quiet source without cranking the phone. */
+    val MIN_VOLUME = 0f
+    val MAX_VOLUME = 2f
 
     private val prefs: Flow<Preferences> get() = context.dataStore.data
 
@@ -96,6 +110,53 @@ class SettingsStore(private val context: Context) {
         runCatching { TranscriptAnchor.valueOf(it[Keys.TRANSCRIPT_ANCHOR] ?: "MIDDLE") }
             .getOrDefault(TranscriptAnchor.MIDDLE)
     }
+
+    val textScaleFlow: Flow<Float> = pref {
+        (it[Keys.TEXT_SCALE] ?: 1.0f).coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
+    }
+
+    suspend fun setTextScale(scale: Float) {
+        context.dataStore.edit { it[Keys.TEXT_SCALE] = scale.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE) }
+    }
+
+    /** App-wide playback volume, applied on top of the per-episode multiplier. */
+    val globalVolumeFlow: Flow<Float> = pref {
+        (it[Keys.GLOBAL_VOLUME] ?: 1.0f).coerceIn(MIN_VOLUME, MAX_VOLUME)
+    }
+
+    suspend fun setGlobalVolume(v: Float) {
+        context.dataStore.edit { it[Keys.GLOBAL_VOLUME] = v.coerceIn(MIN_VOLUME, MAX_VOLUME) }
+    }
+
+    /**
+     * Per-episode volume trims, keyed by item id. Only entries that differ from
+     * the default are stored, so a source tuned once does not bloat the file
+     * with a line for every episode ever opened.
+     */
+    val episodeVolumesFlow: Flow<Map<Int, Float>> = pref { prefs ->
+        parseEpisodeVolumes(prefs[Keys.EPISODE_VOLUMES] ?: "")
+    }
+
+    fun episodeVolumeFlow(itemId: Int): Flow<Float> =
+        pref { prefs -> parseEpisodeVolumes(prefs[Keys.EPISODE_VOLUMES] ?: "")[itemId] ?: 1.0f }
+
+    suspend fun setEpisodeVolume(itemId: Int, v: Float) {
+        val clamped = v.coerceIn(MIN_VOLUME, MAX_VOLUME)
+        context.dataStore.edit { prefs ->
+            val map = parseEpisodeVolumes(prefs[Keys.EPISODE_VOLUMES] ?: "").toMutableMap()
+            // A default trim is the absence of a trim: drop it rather than
+            // recording a line that says "unchanged".
+            if (kotlin.math.abs(clamped - 1.0f) < 0.001f) map.remove(itemId) else map[itemId] = clamped
+            prefs[Keys.EPISODE_VOLUMES] = map.entries.joinToString("\n") { "${it.key}=${it.value}" }
+        }
+    }
+
+    private fun parseEpisodeVolumes(raw: String): Map<Int, Float> =
+        raw.lineSequence().mapNotNull { line ->
+            val id = line.substringBefore('=', "").trim().toIntOrNull() ?: return@mapNotNull null
+            val v = line.substringAfter('=', "").trim().toFloatOrNull() ?: return@mapNotNull null
+            id to v
+        }.toMap()
 
     val themeFlow: Flow<String> = pref { it[Keys.THEME] ?: "black" }
     val accentFlow: Flow<String> = pref { it[Keys.ACCENT] ?: "default" }

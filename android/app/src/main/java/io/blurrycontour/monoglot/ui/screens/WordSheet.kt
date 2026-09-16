@@ -6,7 +6,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +31,8 @@ fun WordSheet(
     onDismiss: () -> Unit,
     onStatus: (String, String) -> Unit,
     onRemove: (String) -> Unit,
+    onPlayFromHere: () -> Unit,
+    onHearWord: () -> Unit,
 ) {
     // Deliberately not skipPartiallyExpanded: at full height the sheet covered
     // the very sentence the word was tapped in, so the definition arrived with
@@ -51,6 +55,22 @@ fun WordSheet(
                 fontSize = 30.sp,
                 fontWeight = FontWeight.SemiBold,
             )
+
+            Spacer(Modifier.height(12.dp))
+            // The word plays itself the moment the sheet opens; these repeat it
+            // and, respectively, hand the episode back starting from this word.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = onHearWord) {
+                    Icon(Icons.Default.VolumeUp, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Hear word")
+                }
+                FilledTonalButton(onClick = onPlayFromHere) {
+                    Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Play from here")
+                }
+            }
 
             when {
                 popup.loading -> {

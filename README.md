@@ -17,6 +17,12 @@ you reveal that one sentence, tap the word you missed, see the definition
 instantly, and replay the sentence. That gap between what you heard and what was
 said is the learning event.
 
+Tapping a word also plays it back straight from the episode audio, and the
+lookup sheet can hand playback back starting from that word. Reading text size,
+an app-wide volume and a per-episode volume trim (which can boost a quietly
+mixed source without turning the phone up) are on the Settings and player
+screens; while the expanded player is open and playing, the screen stays awake.
+
 ## Stack
 
 | Piece | Choice |
