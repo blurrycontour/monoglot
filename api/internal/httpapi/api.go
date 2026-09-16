@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"database/sql"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
@@ -56,6 +57,7 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/api/items/{id}", s.getItem)
 		r.Get("/api/items/{id}/bundle", s.getBundle)
 		r.Get("/api/items/{id}/summary", s.itemSummary)
+		r.Get("/api/items/{id}/meta", s.getItemMeta)
 		r.Get("/api/items/{id}/audio", s.getAudio)
 		r.Post("/api/items/{id}/progress", s.postProgress)
 

@@ -201,6 +201,23 @@ def warm(req: ValidateRequest | None = None):
     return {"status": "ok", "model": _model_name}
 
 
+@app.get("/storage")
+def storage():
+    """Disk used by the downloaded Whisper weights.
+
+    They live in a Docker volume the API cannot see, so the API asks here and
+    folds the figure into the System screen's storage breakdown.
+    """
+    total = 0
+    for root, _dirs, files in os.walk(MODEL_CACHE_DIR):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return {"model_bytes": total}
+
+
 @app.post("/validate")
 def validate(req: ValidateRequest):
     """Check that a model id names weights this worker could actually load.

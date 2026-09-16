@@ -30,9 +30,10 @@ internal/
     migrations/*.sql         Schema, applied in filename order.
   httpapi/                   HTTP handlers (chi). One file per area:
     api.go                   Router and middleware wiring.
-    items.go                 Item listing/detail/bundle/audio. `status=library`
+    items.go                 Item listing/detail/bundle/audio/meta. `status=library`
                              = ready + removed-after-fetch; `archived` =
-                             never-fetched back catalogue.
+                             never-fetched back catalogue. `/meta` returns
+                             per-episode pipeline provenance.
     bundle.go                The inlined per-episode definition bundle.
     words.go                 Vocabulary list and status.
     listening.go             Listening-time stats.
@@ -53,7 +54,7 @@ internal/
 ## worker/ (Python)
 
 ```
-app.py            Flask-ish service: /transcribe, /validate. Model id per call.
+app.py            Flask-ish service: /transcribe, /validate, /storage. Model id per call.
 requirements.txt  faster-whisper, etc.
 Dockerfile
 ```

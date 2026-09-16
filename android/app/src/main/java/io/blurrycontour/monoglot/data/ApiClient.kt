@@ -126,6 +126,9 @@ class ApiClient(private val settings: SettingsStore) {
     suspend fun itemSummary(itemId: Int): EpisodeSummary =
         json.decodeFromString(get("/api/items/$itemId/summary"))
 
+    suspend fun itemMeta(itemId: Int): ItemMeta =
+        json.decodeFromString(get("/api/items/$itemId/meta"))
+
     suspend fun setWordStatus(lemma: String, status: String) {
         val encoded = java.net.URLEncoder.encode(lemma, "UTF-8")
         post("/api/words/$encoded/status", """{"status":"$status"}""")

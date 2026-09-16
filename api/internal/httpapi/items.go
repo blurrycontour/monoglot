@@ -172,6 +172,81 @@ func (s *Server) loadItem(r *http.Request, id int) (ItemSummary, error) {
 	return it, err
 }
 
+// ItemMeta is the pipeline provenance for one episode: how and when it was
+// made. Every field beyond the id may be absent for episodes transcribed before
+// this was recorded, so all the nullable ones are pointers and the client shows
+// a dash for a missing value.
+type ItemMeta struct {
+	ID              int        `json:"id"`
+	Status          string     `json:"status"`
+	PublishedAt     *time.Time `json:"published_at,omitempty"`
+	DiscoveredAt    *time.Time `json:"discovered_at,omitempty"`
+	TranscribedAt   *time.Time `json:"transcribed_at,omitempty"`
+	TranscribeModel string     `json:"transcribe_model,omitempty"`
+	DownloadMS      *int       `json:"download_ms,omitempty"`
+	TranscribeMS    *int       `json:"transcribe_ms,omitempty"`
+	AudioBytes      *int64     `json:"audio_bytes,omitempty"`
+	DurationMS      int        `json:"duration_ms"`
+	SegmentCount    int        `json:"segment_count"`
+	TokenCount      int        `json:"token_count"`
+	WordCount       int        `json:"word_count"`
+}
+
+// getItemMeta returns the provenance shown in the app's episode options.
+func (s *Server) getItemMeta(w http.ResponseWriter, r *http.Request) {
+	id, err := intParam(r, "id")
+	if err != nil {
+		badRequest(w, "bad item id")
+		return
+	}
+	var m ItemMeta
+	m.ID = id
+	var published, discovered, transcribed db.NullTime
+	var model sql.NullString
+	var downloadMS, transcribeMS, audioBytes sql.NullInt64
+	err = s.pool.QueryRowContext(r.Context(), `
+		SELECT i.status, i.published_at, i.created_at, i.transcribed_at,
+		       i.transcribe_model, i.download_ms, i.transcribe_ms,
+		       i.audio_bytes, COALESCE(i.duration_ms,0)
+		FROM items i WHERE i.id = ?`, id).Scan(
+		&m.Status, &published, &discovered, &transcribed, &model,
+		&downloadMS, &transcribeMS, &audioBytes, &m.DurationMS)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		serverError(w, err)
+		return
+	}
+	m.PublishedAt = published.Ptr()
+	m.DiscoveredAt = discovered.Ptr()
+	m.TranscribedAt = transcribed.Ptr()
+	if model.Valid {
+		m.TranscribeModel = model.String
+	}
+	if downloadMS.Valid {
+		v := int(downloadMS.Int64)
+		m.DownloadMS = &v
+	}
+	if transcribeMS.Valid {
+		v := int(transcribeMS.Int64)
+		m.TranscribeMS = &v
+	}
+	if audioBytes.Valid {
+		v := audioBytes.Int64
+		m.AudioBytes = &v
+	}
+	// Counts come from what is actually stored, so they stay right for older
+	// episodes that carry no timing at all.
+	s.pool.QueryRowContext(r.Context(),
+		`SELECT count(*) FROM segments WHERE item_id=?`, id).Scan(&m.SegmentCount)
+	s.pool.QueryRowContext(r.Context(), `
+		SELECT count(*), count(*) FILTER (WHERE is_word)
+		FROM tokens WHERE item_id=?`, id).Scan(&m.TokenCount, &m.WordCount)
+	writeJSON(w, http.StatusOK, m)
+}
+
 func (s *Server) loadSegments(r *http.Request, id int) ([]Seg, error) {
 	rows, err := s.pool.QueryContext(r.Context(), `
 		SELECT id, idx, start_ms, end_ms, text FROM segments

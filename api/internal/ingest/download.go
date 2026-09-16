@@ -163,7 +163,9 @@ func downloadItem(ctx context.Context, pool *sql.DB, audioDir string, id int, ur
 	startDownload(id, resp.ContentLength)
 	defer endDownload(id)
 
+	downloadStart := time.Now()
 	n, err := io.Copy(countingWriter{w: f, id: id}, resp.Body)
+	downloadMS := int(time.Since(downloadStart).Milliseconds())
 	closeErr := f.Close()
 	if err != nil {
 		os.Remove(tmp)
@@ -199,8 +201,9 @@ func downloadItem(ctx context.Context, pool *sql.DB, audioDir string, id int, ur
 	// had.
 	res, err := pool.ExecContext(ctx, `
 		UPDATE items SET status='downloaded', audio_path=?,
-		       duration_ms=COALESCE(?, duration_ms), error=NULL
-		WHERE id=? AND status='downloading'`, dest, dur, id)
+		       duration_ms=COALESCE(?, duration_ms), error=NULL,
+		       download_ms=?, audio_bytes=?
+		WHERE id=? AND status='downloading'`, dest, dur, downloadMS, n, id)
 	if err != nil {
 		return err
 	}

@@ -23,6 +23,25 @@ data class ItemSummary(
 @Serializable
 data class ItemsResponse(val items: List<ItemSummary> = emptyList())
 
+/** Pipeline provenance for one episode. Every timing field is nullable: an
+ *  episode transcribed before this was recorded simply has none. */
+@Serializable
+data class ItemMeta(
+    val id: Int,
+    val status: String = "",
+    @SerialName("published_at") val publishedAt: String? = null,
+    @SerialName("discovered_at") val discoveredAt: String? = null,
+    @SerialName("transcribed_at") val transcribedAt: String? = null,
+    @SerialName("transcribe_model") val transcribeModel: String = "",
+    @SerialName("download_ms") val downloadMs: Int? = null,
+    @SerialName("transcribe_ms") val transcribeMs: Int? = null,
+    @SerialName("audio_bytes") val audioBytes: Long? = null,
+    @SerialName("duration_ms") val durationMs: Int = 0,
+    @SerialName("segment_count") val segmentCount: Int = 0,
+    @SerialName("token_count") val tokenCount: Int = 0,
+    @SerialName("word_count") val wordCount: Int = 0,
+)
+
 @Serializable
 data class Segment(
     val id: Int,
@@ -200,6 +219,7 @@ data class StorageInfo(
     @SerialName("raw_bytes") val rawBytes: Long = 0,
     @SerialName("cache_bytes") val cacheBytes: Long = 0,
     @SerialName("apk_bytes") val apkBytes: Long = 0,
+    @SerialName("model_bytes") val modelBytes: Long = 0,
     @SerialName("total_bytes") val totalBytes: Long = 0,
     @SerialName("disk_free_bytes") val diskFree: Long = 0,
     @SerialName("database_bytes") val databaseBytes: Long = 0,

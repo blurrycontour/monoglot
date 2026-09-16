@@ -1018,6 +1018,7 @@ private fun EpisodeCard(
                 }
 
                 EpisodeActionsMenu(
+                    itemId = item.id,
                     downloaded = downloaded,
                     hasProgress = item.positionMs > 0 || item.completed,
                     onToggleDownload = onToggleDownload,

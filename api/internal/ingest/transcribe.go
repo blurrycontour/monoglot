@@ -203,7 +203,9 @@ func transcribeItem(ctx context.Context, pool *sql.DB, workerURL, rawDir string,
 	// the app, and a batch that started before the change should pick it up on
 	// its next item, not on the next restart.
 	model := TranscriptionModel(ctx, pool)
+	transcribeStart := time.Now()
 	resp, err := callWorker(callCtx, workerURL, audioPath, asr, model)
+	transcribeMS := int(time.Since(transcribeStart).Milliseconds())
 	unregisterTranscription(id)
 	if err != nil {
 		// The worker gave the job up because we asked, or we stopped waiting
@@ -245,7 +247,7 @@ func transcribeItem(ctx context.Context, pool *sql.DB, workerURL, rawDir string,
 		return nil
 	}
 
-	return persist(ctx, pool, id, lang, resp)
+	return persist(ctx, pool, id, lang, resp, model, transcribeMS)
 }
 
 func callWorker(ctx context.Context, workerURL, audioPath, language, model string) (*TranscriptResponse, error) {
@@ -287,7 +289,7 @@ func callWorker(ctx context.Context, workerURL, audioPath, language, model strin
 
 // persist writes segments and tokens in one transaction, resolving each token's
 // lemma as it goes so the read path never does morphology work.
-func persist(ctx context.Context, pool *sql.DB, itemID int, lang string, tr *TranscriptResponse) error {
+func persist(ctx context.Context, pool *sql.DB, itemID int, lang string, tr *TranscriptResponse, model string, transcribeMS int) error {
 	tx, err := pool.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -349,8 +351,10 @@ func persist(ctx context.Context, pool *sql.DB, itemID int, lang string, tr *Tra
 
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE items SET status='ready', error=NULL,
-		        fetched_at=COALESCE(fetched_at, strftime('%Y-%m-%d %H:%M:%S','now'))
-		 WHERE id=?`, itemID); err != nil {
+		        fetched_at=COALESCE(fetched_at, strftime('%Y-%m-%d %H:%M:%S','now')),
+		        transcribed_at=strftime('%Y-%m-%d %H:%M:%S','now'),
+		        transcribe_model=?, transcribe_ms=?
+		 WHERE id=?`, model, transcribeMS, itemID); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

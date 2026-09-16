@@ -366,14 +366,16 @@ fun SystemScreen(visible: Boolean = true) {
                         StatRow("Audio", formatBytesShort(sys.storage.audioBytes))
                         StatRow("Transcripts (raw)", formatBytesShort(sys.storage.rawBytes))
                         StatRow("Dictionary downloads", formatBytesShort(sys.storage.cacheBytes))
+                        StatRow("Whisper models", formatBytesShort(sys.storage.modelBytes))
                         StatRow("Database", formatBytesShort(sys.storage.databaseBytes))
                         StatRow("App package", formatBytesShort(sys.storage.apkBytes))
                         HorizontalDivider(Modifier.padding(vertical = 8.dp))
                         // The sum, so the figure that matters is not left to be
-                        // added up from five rows.
+                        // added up from the rows. The server already includes
+                        // the database and model weights in this total.
                         StatRow(
                             "Total used",
-                            formatBytesShort(sys.storage.totalBytes + sys.storage.databaseBytes),
+                            formatBytesShort(sys.storage.totalBytes),
                             emphasise = true,
                         )
                         StatRow("Free on disk", formatBytesShort(sys.storage.diskFree))

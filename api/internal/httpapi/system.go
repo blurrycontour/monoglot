@@ -1,13 +1,16 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/blurrycontour/monoglot/api/internal/db"
@@ -51,6 +54,7 @@ type SystemInfo struct {
 		RawBytes     int64 `json:"raw_bytes"`
 		CacheBytes   int64 `json:"cache_bytes"`
 		APKBytes     int64 `json:"apk_bytes"`
+		ModelBytes   int64 `json:"model_bytes"`
 		TotalBytes   int64 `json:"total_bytes"`
 		DiskFree     int64 `json:"disk_free_bytes"`
 		DatabaseSize int64 `json:"database_bytes"`
@@ -161,8 +165,16 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 	if fi, err := os.Stat(s.apkPath()); err == nil {
 		info.Storage.APKBytes = fi.Size()
 	}
+	info.Storage.DatabaseSize = db.FileSize(s.cfg.DatabasePath)
+	// The Whisper weights live in the worker's own Docker volume, which this
+	// container cannot see, so the worker is asked for the figure.
+	info.Storage.ModelBytes = workerModelBytes(ctx, s.cfg.WorkerURL)
+	// Everything the server holds on disk: the data dirs, the database and the
+	// model weights. The database and the weights were both missing before, so
+	// the reported total ran short of what `du` on the host actually shows.
 	info.Storage.TotalBytes = info.Storage.AudioBytes + info.Storage.RawBytes +
-		info.Storage.CacheBytes + info.Storage.APKBytes
+		info.Storage.CacheBytes + info.Storage.APKBytes +
+		info.Storage.DatabaseSize + info.Storage.ModelBytes
 	info.Storage.DiskFree = diskFree(s.cfg.AudioDir)
 	// ?fresh=1 trades the response time for a live reading. The System screen
 	// asks for it because it is showing a spinner while it waits; nothing on
@@ -173,7 +185,6 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 		info.Containers = readContainerStats()
 	}
 
-	info.Storage.DatabaseSize = db.FileSize(s.cfg.DatabasePath)
 	s.pool.QueryRowContext(ctx, `SELECT count(*) FROM lexemes`).Scan(&info.Lexicon.Lexemes)
 	s.pool.QueryRowContext(ctx, `SELECT count(*) FROM forms`).Scan(&info.Lexicon.Forms)
 	s.pool.QueryRowContext(ctx, `
@@ -197,6 +208,38 @@ func cacheDir() string {
 		return v
 	}
 	return "/data/cache"
+}
+
+// workerModelBytes asks the worker how much disk its Whisper weights use. The
+// weights sit in a Docker volume mounted only into the worker, so this is the
+// one place that can measure them. Best-effort: a worker that is down or too
+// old to answer simply reports zero rather than failing the whole screen.
+func workerModelBytes(ctx context.Context, workerURL string) int64 {
+	if workerURL == "" {
+		return 0
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet,
+		strings.TrimRight(workerURL, "/")+"/storage", nil)
+	if err != nil {
+		return 0
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return 0
+	}
+	var out struct {
+		ModelBytes int64 `json:"model_bytes"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return 0
+	}
+	return out.ModelBytes
 }
 
 func dirSize(dir string) int64 {

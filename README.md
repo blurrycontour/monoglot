@@ -241,7 +241,13 @@ archive from filling the disk on first sync.
 ## Managing storage
 
 The **System** tab shows what is finished, what is in progress, and what is
-using disk, broken down per source.
+using disk, broken down per source. The storage breakdown includes the Whisper
+model weights (measured in the worker's own volume), the database and the app
+package, so the total matches the host. Each episode's options menu has an
+**Episode details** entry showing how it was made: when it was transcribed, the
+model used, download and transcription times, audio size and segment/word
+counts. Older episodes predating this simply show a dash for what was not
+recorded.
 
 Two independent things use space:
 

@@ -154,6 +154,7 @@ fun PlayerScreen(itemId: Int, onBack: () -> Unit) {
                         Icon(Icons.Default.FormatSize, contentDescription = "Text size")
                     }
                     EpisodeActionsMenu(
+                        itemId = itemId,
                         downloaded = state.isDownloaded,
                         hasProgress = state.positionMs > 0 || state.completed,
                         onToggleDownload = { vm.toggleDownload() },
