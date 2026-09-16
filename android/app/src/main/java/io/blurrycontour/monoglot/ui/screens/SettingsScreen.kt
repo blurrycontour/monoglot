@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import io.blurrycontour.monoglot.data.TranscriptAnchor
 import io.blurrycontour.monoglot.data.TranscriptMode
+import io.blurrycontour.monoglot.data.WordAudioSource
 import io.blurrycontour.monoglot.ui.theme.ACCENTS
 import io.blurrycontour.monoglot.ui.theme.ALL_THEMES
 import io.blurrycontour.monoglot.ui.theme.AppTheme
@@ -57,6 +58,7 @@ data class SettingsState(
     val transcriptAnchor: TranscriptAnchor = TranscriptAnchor.MIDDLE,
     val textScale: Float = 1.0f,
     val globalVolume: Float = 1.0f,
+    val wordTapSource: WordAudioSource = WordAudioSource.EPISODE,
     val sources: List<SourceRow> = emptyList(),
     val message: String? = null,
     val connection: Connection = Connection.UNKNOWN,
@@ -85,6 +87,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 transcriptAnchor = repo.settings.transcriptAnchorFlow.first(),
                 textScale = repo.settings.textScaleFlow.first(),
                 globalVolume = repo.settings.globalVolumeFlow.first(),
+                wordTapSource = repo.settings.wordTapSourceFlow.first(),
                 offlineBytes = repo.offline.totalBytes(),
                 offlineCount = repo.offline.downloads.all().size,
             )
@@ -150,6 +153,11 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { repo.settings.setGlobalVolume(v) }
         _state.value = _state.value.copy(globalVolume = v)
         PlaybackHolder.setVolume(v)
+    }
+
+    fun setWordTapSource(source: WordAudioSource) {
+        viewModelScope.launch { repo.settings.setWordTapSource(source) }
+        _state.value = _state.value.copy(wordTapSource = source)
     }
 
     fun toggleSource(source: SourceRow) {
@@ -393,6 +401,27 @@ fun SettingsScreen(visible: Boolean = true) {
 
                 Spacer(Modifier.height(14.dp))
                 VolumeSetting(state.globalVolume) { vm.setGlobalVolume(it) }
+
+                Spacer(Modifier.height(14.dp))
+                Text("Tapping a word plays", style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(8.dp))
+                SingleChoiceSegmentedButtonRow {
+                    WordAudioSource.entries.forEachIndexed { i, s ->
+                        SegmentedButton(
+                            selected = state.wordTapSource == s,
+                            onClick = { vm.setWordTapSource(s) },
+                            shape = SegmentedButtonDefaults.itemShape(i, WordAudioSource.entries.size),
+                        ) { Text(s.label) }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Episode audio is the word as actually spoken; Spoken is a " +
+                        "clean synthetic reference. Both are always one tap away " +
+                        "in the lookup sheet — this is only the default on tap.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             // Downloaded audio is on this phone, so it is configured here

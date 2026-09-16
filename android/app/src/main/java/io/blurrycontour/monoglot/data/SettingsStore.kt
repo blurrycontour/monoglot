@@ -30,6 +30,15 @@ enum class TranscriptAnchor(val label: String, val fraction: Float) {
     BOTTOM("Bottom", 1f),
 }
 
+/** Which audio a word tap plays by default: the word as spoken in the episode,
+ *  or a clean synthetic reference from the system Swedish voice. Either is
+ *  always reachable from the lookup sheet; this only sets which one is
+ *  automatic on tap. */
+enum class WordAudioSource(val label: String) {
+    EPISODE("Episode audio"),
+    SPOKEN("Spoken"),
+}
+
 enum class TranscriptMode {
     /** No text at all. The default, and the point of the app. */
     HIDDEN,
@@ -72,6 +81,7 @@ class SettingsStore(private val context: Context) {
         val GLOBAL_VOLUME = floatPreferencesKey("global_volume")
         val EPISODE_VOLUMES = stringPreferencesKey("episode_volumes")
         val EPISODE_TEXT_SCALES = stringPreferencesKey("episode_text_scales")
+        val WORD_TAP_SOURCE = stringPreferencesKey("word_tap_source")
     }
 
     /** Reading text size, as a multiplier on the transcript style. Clamped to a
@@ -138,6 +148,16 @@ class SettingsStore(private val context: Context) {
             if (kotlin.math.abs(clamped - 1.0f) < 0.001f) map.remove(itemId) else map[itemId] = clamped
             prefs[Keys.EPISODE_TEXT_SCALES] = map.entries.joinToString("\n") { "${it.key}=${it.value}" }
         }
+    }
+
+    /** Default audio for a word tap. */
+    val wordTapSourceFlow: Flow<WordAudioSource> = pref {
+        runCatching { WordAudioSource.valueOf(it[Keys.WORD_TAP_SOURCE] ?: "EPISODE") }
+            .getOrDefault(WordAudioSource.EPISODE)
+    }
+
+    suspend fun setWordTapSource(source: WordAudioSource) {
+        context.dataStore.edit { it[Keys.WORD_TAP_SOURCE] = source.name }
     }
 
     /** App-wide playback volume, applied on top of the per-episode multiplier. */

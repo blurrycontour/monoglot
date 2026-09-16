@@ -15,6 +15,7 @@ import io.blurrycontour.monoglot.data.EpisodeSummary
 import io.blurrycontour.monoglot.data.Graph
 import io.blurrycontour.monoglot.data.Token
 import io.blurrycontour.monoglot.data.TranscriptMode
+import io.blurrycontour.monoglot.data.WordAudioSource
 
 data class WordPopup(
     val token: Token,
@@ -178,7 +179,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
+        // Which audio a tap plays by default, kept live so a change in Settings
+        // applies to the episode already open.
+        viewModelScope.launch {
+            repo.settings.wordTapSourceFlow.collect { wordTapUsesTts = it == WordAudioSource.SPOKEN }
+        }
     }
+
+    /** Default word-tap audio, from settings. */
+    private var wordTapUsesTts = false
 
     private fun updatePosition(positionMs: Int) {
         val idx = index ?: return
@@ -326,16 +335,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // within that gap, so a slightly-early or -late boundary does not shear
         // the word's own onset or tail. The padding only ever eats the silence
         // between words, never the words themselves.
+        // Clamp the start to the previous word so a preview does not open on
+        // the tail of the one before, but leave the end deliberately loose: a
+        // little of the next word slipping in matters far less than the tapped
+        // word being cut short, which Whisper's early end-timestamps do
+        // constantly — worst on long compounds like "kontantsystemet".
         val tokens = index?.tokens
         val i = tokens?.indexOfFirst { it.id == token.id } ?: -1
         val prevEnd = tokens?.getOrNull(i - 1)?.endMs ?: 0
-        val nextStart = tokens?.getOrNull(i + 1)?.startMs ?: Int.MAX_VALUE
         val rawEnd0 = if (token.endMs > token.startMs) token.endMs else token.startMs + 300
         val start = (token.startMs - CLIP_LEAD_MS).coerceAtLeast(prevEnd).coerceAtLeast(0)
-        // A generous tail: Whisper's word-end timestamps run early far more
-        // often than late, so the last consonant was routinely being cut. Still
-        // clamped to the next word, so it only ever borrows the gap after it.
-        var end = (rawEnd0 + CLIP_TRAIL_MS).coerceAtMost(nextStart)
+        var end = maxOf(rawEnd0 + CLIP_TRAIL_MS, start + MIN_CLIP_MS)
+        val dur = _state.value.durationMs
+        if (dur > 0) end = end.coerceAtMost(dur)
         if (end <= start) end = start + 150
 
         val item = androidx.media3.common.MediaItem.Builder()
@@ -454,8 +466,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             PlaybackHolder.pause()
         }
 
-        // Hear the word as well as read it, straight from the episode audio.
-        previewWord(token)
+        // Hear the word as well as read it: the episode audio as spoken, or a
+        // synthetic reference, per the reader's default. Either is still one tap
+        // away in the sheet.
+        if (wordTapUsesTts) speakWord(token) else previewWord(token)
 
         val bundle = _state.value.bundle
         val inline = bundle?.definitions?.get(token.normalized)
@@ -646,11 +660,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
          *  catch, and it is a single word so the lower pitch does not matter. */
         const val PREVIEW_SPEED = 0.85f
 
-        /** Breathing room added to each edge of a word clip, inside the clamp to
-         *  its neighbours, so an imprecise timestamp does not shear the word.
-         *  The tail is longer because Whisper ends words early far more than
-         *  late. */
+        /** Breathing room added to each edge of a word clip. The tail is much
+         *  longer than the lead because Whisper ends words early far more than
+         *  late, and a slip of the next word is preferable to a clipped word. */
         const val CLIP_LEAD_MS = 70
-        const val CLIP_TRAIL_MS = 200
+        const val CLIP_TRAIL_MS = 350
+
+        /** No preview is shorter than this, so a very short word still gets a
+         *  full, hearable clip rather than a clipped syllable. */
+        const val MIN_CLIP_MS = 550
     }
 }
