@@ -131,21 +131,18 @@ class SettingsStore(private val context: Context) {
     }
 
     /**
-     * Per-episode text-size trims, keyed by item id, multiplied onto the global
-     * size the same way per-episode volume is. Only non-default entries stored.
+     * Per-episode text-size override, keyed by item id. Absolute, like the
+     * per-episode volume: present means it wins, absent means follow the global
+     * size.
      */
-    val episodeTextScalesFlow: Flow<Map<Int, Float>> = pref { prefs ->
-        parseEpisodeFloats(prefs[Keys.EPISODE_TEXT_SCALES] ?: "")
-    }
-
-    fun episodeTextScaleFlow(itemId: Int): Flow<Float> =
-        pref { prefs -> parseEpisodeFloats(prefs[Keys.EPISODE_TEXT_SCALES] ?: "")[itemId] ?: 1.0f }
+    fun episodeTextScaleOverrideFlow(itemId: Int): Flow<Float?> =
+        pref { prefs -> parseEpisodeFloats(prefs[Keys.EPISODE_TEXT_SCALES] ?: "")[itemId] }
 
     suspend fun setEpisodeTextScale(itemId: Int, v: Float) {
         val clamped = v.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
         context.dataStore.edit { prefs ->
             val map = parseEpisodeFloats(prefs[Keys.EPISODE_TEXT_SCALES] ?: "").toMutableMap()
-            if (kotlin.math.abs(clamped - 1.0f) < 0.001f) map.remove(itemId) else map[itemId] = clamped
+            map[itemId] = clamped
             prefs[Keys.EPISODE_TEXT_SCALES] = map.entries.joinToString("\n") { "${it.key}=${it.value}" }
         }
     }
@@ -174,20 +171,19 @@ class SettingsStore(private val context: Context) {
      * the default are stored, so a source tuned once does not bloat the file
      * with a line for every episode ever opened.
      */
-    val episodeVolumesFlow: Flow<Map<Int, Float>> = pref { prefs ->
-        parseEpisodeFloats(prefs[Keys.EPISODE_VOLUMES] ?: "")
-    }
-
-    fun episodeVolumeFlow(itemId: Int): Flow<Float> =
-        pref { prefs -> parseEpisodeFloats(prefs[Keys.EPISODE_VOLUMES] ?: "")[itemId] ?: 1.0f }
+    /**
+     * Per-episode volume, keyed by item id. An absolute override: when an entry
+     * exists it wins outright, and when it does not the episode simply follows
+     * the global volume. Setting one stores it as-is; there is no multiplying.
+     */
+    fun episodeVolumeOverrideFlow(itemId: Int): Flow<Float?> =
+        pref { prefs -> parseEpisodeFloats(prefs[Keys.EPISODE_VOLUMES] ?: "")[itemId] }
 
     suspend fun setEpisodeVolume(itemId: Int, v: Float) {
         val clamped = v.coerceIn(MIN_VOLUME, MAX_VOLUME)
         context.dataStore.edit { prefs ->
             val map = parseEpisodeFloats(prefs[Keys.EPISODE_VOLUMES] ?: "").toMutableMap()
-            // A default trim is the absence of a trim: drop it rather than
-            // recording a line that says "unchanged".
-            if (kotlin.math.abs(clamped - 1.0f) < 0.001f) map.remove(itemId) else map[itemId] = clamped
+            map[itemId] = clamped
             prefs[Keys.EPISODE_VOLUMES] = map.entries.joinToString("\n") { "${it.key}=${it.value}" }
         }
     }

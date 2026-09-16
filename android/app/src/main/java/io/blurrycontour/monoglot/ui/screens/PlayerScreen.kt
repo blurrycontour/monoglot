@@ -532,10 +532,11 @@ private fun SentenceText(
 }
 
 /**
- * Volume, per app and per episode. Two trims that multiply: the global one sets
- * a comfortable baseline, the per-episode one rescues a source that was mixed
- * quiet without having to reach for the phone's own volume — which, on
- * headphones, is a hazard when a call or an alarm arrives at the same setting.
+ * Volume, per app and per episode. The app volume is the baseline every episode
+ * follows; the per-episode slider overrides it outright for this one episode
+ * only, to rescue a source that was mixed quiet without reaching for the phone's
+ * own volume — a hazard on headphones when a call or alarm arrives at the same
+ * setting.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -555,8 +556,9 @@ private fun VolumeSheet(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "Above 100% boosts a quietly-mixed source without turning the " +
-                    "phone up. The two multiply.",
+                "App volume is the default for every episode. Set \"This episode\" " +
+                    "to give just this one its own level; above 100% boosts a " +
+                    "quietly-mixed source without turning the phone up.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -590,9 +592,10 @@ private fun VolumeSlider(label: String, value: Float, onChange: (Float) -> Unit)
 }
 
 /**
- * Reading text size, per app and per episode, the two multiplied like volume.
- * The preview is the transcript style itself at the effective size, since a
- * percentage says nothing about how a sentence will actually read.
+ * Reading text size, per app and per episode. App size is the default; the
+ * per-episode slider overrides it for this one episode. The preview is the
+ * transcript style itself at the effective size, since a percentage says
+ * nothing about how a sentence will actually read.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -615,7 +618,9 @@ private fun TextSizeSheet(
             Spacer(Modifier.height(8.dp))
             TextScaleSlider("This episode", episode, onEpisode)
             Spacer(Modifier.height(10.dp))
-            val effective = (global * episode).coerceIn(0.8f, 1.6f)
+            // The episode value is already absolute (it overrides the global
+            // rather than scaling it), so the preview uses it directly.
+            val effective = episode.coerceIn(0.8f, 1.6f)
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(10.dp),

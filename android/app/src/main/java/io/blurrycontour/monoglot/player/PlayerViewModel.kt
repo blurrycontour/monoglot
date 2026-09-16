@@ -49,23 +49,31 @@ data class PlayerState(
     val busy: Boolean = false,
     /** App-wide volume multiplier; 1.0 is the source as recorded. */
     val globalVolume: Float = 1.0f,
-    /** Per-episode volume trim, multiplied onto the global one. */
-    val episodeVolume: Float = 1.0f,
+    /** Per-episode absolute volume override; null follows the global volume. */
+    val episodeVolumeOverride: Float? = null,
     /** App-wide reading text size; 1.0 is the design size. */
     val globalTextScale: Float = 1.0f,
-    /** Per-episode text-size trim, multiplied onto the global one. */
-    val episodeTextScale: Float = 1.0f,
+    /** Per-episode absolute text-size override; null follows the global size. */
+    val episodeTextScaleOverride: Float? = null,
     /** True while the tapped word's episode clip is sounding. */
     val wordPreviewPlaying: Boolean = false,
     /** True while the system voice is speaking the tapped word. */
     val wordSpeaking: Boolean = false,
 ) {
-    /** What actually reaches the player: the two trims multiplied, capped at
-     *  the boost ceiling the service can deliver. */
-    val effectiveVolume: Float get() = (globalVolume * episodeVolume).coerceIn(0f, 2f)
+    /** What actually reaches the player: the episode's override if it has one,
+     *  otherwise the global volume. */
+    val effectiveVolume: Float get() = (episodeVolumeOverride ?: globalVolume).coerceIn(0f, 2f)
 
-    /** Reading size actually applied, kept inside the legible band. */
-    val effectiveTextScale: Float get() = (globalTextScale * episodeTextScale).coerceIn(0.8f, 1.6f)
+    /** The episode's override if set, else the global; shown on the local
+     *  slider and applied to playback. */
+    val episodeVolume: Float get() = episodeVolumeOverride ?: globalVolume
+
+    /** Reading size actually applied: the override if set, else global, kept
+     *  inside the legible band. */
+    val effectiveTextScale: Float get() = (episodeTextScaleOverride ?: globalTextScale).coerceIn(0.8f, 1.6f)
+
+    /** The override if set, else global; shown on the local text slider. */
+    val episodeTextScale: Float get() = episodeTextScaleOverride ?: globalTextScale
 }
 
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
@@ -129,9 +137,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 val speed = repo.settings.speedFlow.first()
                 mediaUri = repo.mediaUri(itemId)
                 val globalVol = repo.settings.globalVolumeFlow.first()
-                val episodeVol = repo.settings.episodeVolumeFlow(itemId).first()
+                val episodeVol = repo.settings.episodeVolumeOverrideFlow(itemId).first()
                 val globalText = repo.settings.textScaleFlow.first()
-                val episodeText = repo.settings.episodeTextScaleFlow(itemId).first()
+                val episodeText = repo.settings.episodeTextScaleOverrideFlow(itemId).first()
                 _state.value = _state.value.copy(
                     loading = false,
                     bundle = bundle,
@@ -141,9 +149,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     isDownloaded = repo.isDownloaded(itemId),
                     completed = bundle.item.completed,
                     globalVolume = globalVol,
-                    episodeVolume = episodeVol,
+                    episodeVolumeOverride = episodeVol,
                     globalTextScale = globalText,
-                    episodeTextScale = episodeText,
+                    episodeTextScaleOverride = episodeText,
                 )
                 PlaybackHolder.setVolume(_state.value.effectiveVolume)
 
@@ -278,7 +286,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setEpisodeVolume(v: Float) {
-        _state.value = _state.value.copy(episodeVolume = v)
+        _state.value = _state.value.copy(episodeVolumeOverride = v)
         PlaybackHolder.setVolume(_state.value.effectiveVolume)
         if (itemId > 0) viewModelScope.launch { repo.settings.setEpisodeVolume(itemId, v) }
     }
@@ -289,7 +297,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setEpisodeTextScale(v: Float) {
-        _state.value = _state.value.copy(episodeTextScale = v)
+        _state.value = _state.value.copy(episodeTextScaleOverride = v)
         if (itemId > 0) viewModelScope.launch { repo.settings.setEpisodeTextScale(itemId, v) }
     }
 
