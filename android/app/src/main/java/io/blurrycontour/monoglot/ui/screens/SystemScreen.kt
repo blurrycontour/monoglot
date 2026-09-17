@@ -510,9 +510,14 @@ fun SystemScreen(visible: Boolean = true) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 10.dp),
                         )
-                    }
 
-                    SectionCard("Whisper models") {
+                        HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                        Text(
+                            "Whisper models",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(Modifier.height(8.dp))
                         if (state.downloadedModels.isEmpty()) {
                             Text(
                                 "No models downloaded on the server yet.",
@@ -532,8 +537,6 @@ fun SystemScreen(visible: Boolean = true) {
                             }
                             if (state.selectedModels.isNotEmpty()) {
                                 Spacer(Modifier.height(10.dp))
-                                HorizontalDivider()
-                                Spacer(Modifier.height(10.dp))
                                 val selectedBytes = state.downloadedModels
                                     .filter { it.name in state.selectedModels }.sumOf { it.bytes }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -543,7 +546,7 @@ fun SystemScreen(visible: Boolean = true) {
                                         style = MaterialTheme.typography.bodySmall,
                                         modifier = Modifier.weight(1f),
                                     )
-                                    Button(
+                                    OutlinedButton(
                                         onClick = { deleteModelsDialog = true },
                                         enabled = !state.modelsBusy,
                                     ) {
@@ -696,7 +699,7 @@ private fun CleanupOptionRow(
                 )
             }
             Spacer(Modifier.width(12.dp))
-            TextButton(onClick = onFreeUp, enabled = !busy && enabled) { Text("Free up") }
+            OutlinedButton(onClick = onFreeUp, enabled = !busy && enabled) { Text("Free up") }
         }
         extra?.let {
             Spacer(Modifier.height(10.dp))

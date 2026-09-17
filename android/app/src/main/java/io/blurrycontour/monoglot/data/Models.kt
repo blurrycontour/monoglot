@@ -334,4 +334,3 @@ data class ModelStorageEntry(
 
 @Serializable
 data class ModelStorageResponse(val models: List<ModelStorageEntry> = emptyList())
-
