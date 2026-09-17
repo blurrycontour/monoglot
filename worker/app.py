@@ -11,6 +11,7 @@ import ctypes
 import gc
 import logging
 import os
+import shutil
 import stat
 import threading
 import time
@@ -202,12 +203,8 @@ def warm(req: ValidateRequest | None = None):
     return {"status": "ok", "model": _model_name}
 
 
-@app.get("/storage")
-def storage():
-    """Disk used by the downloaded Whisper weights.
-
-    They live in a Docker volume the API cannot see, so the API asks here and
-    folds the figure into the System screen's storage breakdown.
+def _dir_bytes(path: str) -> int:
+    """Real bytes under a directory, deduped for the HF cache's blob symlinks.
 
     The Hugging Face cache keeps the real weights in blobs/ and points to them
     from snapshots/ with symlinks, so following every path double-counts the
@@ -216,11 +213,11 @@ def storage():
     """
     total = 0
     seen: set[tuple[int, int]] = set()
-    for root, _dirs, files in os.walk(MODEL_CACHE_DIR):
+    for root, _dirs, files in os.walk(path):
         for name in files:
-            path = os.path.join(root, name)
+            fpath = os.path.join(root, name)
             try:
-                st = os.lstat(path)
+                st = os.lstat(fpath)
             except OSError:
                 continue
             if stat.S_ISLNK(st.st_mode):
@@ -230,7 +227,65 @@ def storage():
                 continue
             seen.add(key)
             total += st.st_size
-    return {"model_bytes": total}
+    return total
+
+
+@app.get("/storage")
+def storage():
+    """Disk used by the downloaded Whisper weights.
+
+    They live in a Docker volume the API cannot see, so the API asks here and
+    folds the figure into the System screen's storage breakdown.
+    """
+    return {"model_bytes": _dir_bytes(MODEL_CACHE_DIR)}
+
+
+def _cache_dir_name(name: str) -> str:
+    return "models--" + name.replace("/", "--")
+
+
+@app.get("/models")
+def list_models():
+    """Every model downloaded into the cache, and its size.
+
+    So the System screen can offer "delete this one" rather than only the
+    single combined figure /storage reports.
+    """
+    out = []
+    if os.path.isdir(MODEL_CACHE_DIR):
+        for entry in sorted(os.listdir(MODEL_CACHE_DIR)):
+            if not entry.startswith("models--"):
+                continue
+            path = os.path.join(MODEL_CACHE_DIR, entry)
+            if not os.path.isdir(path):
+                continue
+            name = entry[len("models--"):].replace("--", "/", 1)
+            out.append({"name": name, "bytes": _dir_bytes(path)})
+    return {"models": out}
+
+
+@app.delete("/models/{name:path}")
+def delete_model(name: str):
+    """Remove one downloaded model's cache directory.
+
+    Deleting the model currently loaded in memory is allowed — the weights
+    already live in this process's RSS — but the in-memory handle is dropped
+    too, so nothing tries to use a model.bin that no longer exists.
+    """
+    path = os.path.join(MODEL_CACHE_DIR, _cache_dir_name(name))
+    if not os.path.isdir(path):
+        raise HTTPException(status_code=404, detail=f"{name} is not downloaded")
+
+    global _model, _model_name
+    with _model_lock:
+        if _model_name == name:
+            _model = None
+            _model_name = ""
+            gc.collect()
+            _trim_heap()
+    shutil.rmtree(path)
+    log.info("deleted model %s", name)
+    return {"status": "ok", "deleted": name}
 
 
 @app.post("/validate")
