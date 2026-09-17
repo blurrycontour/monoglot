@@ -3,6 +3,7 @@ package io.blurrycontour.monoglot.ui.screens
 import android.app.Application
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,9 +31,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import io.blurrycontour.monoglot.data.BootstrapStatus
+import io.blurrycontour.monoglot.data.CleanupPreview
 import io.blurrycontour.monoglot.data.ContainerStat
 import io.blurrycontour.monoglot.data.DayTotal
 import io.blurrycontour.monoglot.data.Graph
+import io.blurrycontour.monoglot.data.ModelStorageEntry
 import io.blurrycontour.monoglot.data.Schedule
 import io.blurrycontour.monoglot.data.ModelSettings
 import io.blurrycontour.monoglot.data.SourceStats
@@ -58,6 +61,14 @@ data class SystemState(
      *  Validating is a round trip to the worker, so it needs saying. */
     val modelChecking: Boolean = false,
     val modelError: String? = null,
+    /** Day threshold for the "old episodes" cleanup option, and what it would
+     *  currently free — refetched every time the threshold changes. */
+    val oldDays: Int = 30,
+    val oldPreview: CleanupPreview? = null,
+    val finishedPreview: CleanupPreview? = null,
+    val downloadedModels: List<ModelStorageEntry> = emptyList(),
+    val selectedModels: Set<String> = emptySet(),
+    val modelsBusy: Boolean = false,
 )
 
 class SystemViewModel(app: Application) : AndroidViewModel(app) {
@@ -102,6 +113,14 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
             }
             runCatching { repo.api.transcriptionModel() }.onSuccess {
                 _state.value = _state.value.copy(model = it)
+            }
+            loadCleanupPreviews()
+            runCatching { repo.api.models() }.onSuccess {
+                _state.value = _state.value.copy(
+                    downloadedModels = it,
+                    // A model that no longer exists cannot stay selected.
+                    selectedModels = _state.value.selectedModels intersect it.map { m -> m.name }.toSet(),
+                )
             }
             // This screen exists to show the container figures, and it always
             // has a spinner up while it loads, so it pays for a live sample
@@ -191,15 +210,89 @@ class SystemViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun cleanup(days: Int) {
+    /** Refetches the live count/size for both cleanup options, so the screen
+     *  never asks the user to commit to a stale figure. */
+    private suspend fun loadCleanupPreviews() {
+        runCatching { repo.api.cleanupPreview("old", _state.value.oldDays) }.onSuccess {
+            _state.value = _state.value.copy(oldPreview = it)
+        }
+        runCatching { repo.api.cleanupPreview("finished") }.onSuccess {
+            _state.value = _state.value.copy(finishedPreview = it)
+        }
+    }
+
+    /** Changes the day threshold for "old episodes" and refreshes its preview,
+     *  without touching anything else on the screen. */
+    fun setOldDays(days: Int) {
+        _state.value = _state.value.copy(oldDays = days)
+        viewModelScope.launch {
+            runCatching { repo.api.cleanupPreview("old", days) }.onSuccess {
+                _state.value = _state.value.copy(oldPreview = it)
+            }
+        }
+    }
+
+    fun cleanupOld() {
         viewModelScope.launch {
             _state.value = _state.value.copy(busy = true)
-            val n = runCatching { repo.api.cleanup(days) }.getOrDefault(0)
+            val result = runCatching { repo.api.cleanup("old", _state.value.oldDays) }.getOrNull()
             _state.value = _state.value.copy(
                 busy = false,
-                message = if (n == 0) "Nothing older than $days days to free"
-                          else "Freed $n episode${if (n == 1) "" else "s"}",
+                message = if (result == null || result.count == 0) "Nothing older than ${_state.value.oldDays} days to free"
+                          else "Freed ${result.count} episode${if (result.count == 1) "" else "s"} " +
+                              "(${formatBytesShort(result.bytes)})",
             )
+            load()
+        }
+    }
+
+    fun cleanupFinished() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(busy = true)
+            val result = runCatching { repo.api.cleanup("finished") }.getOrNull()
+            _state.value = _state.value.copy(
+                busy = false,
+                message = if (result == null || result.count == 0) "No finished episodes to free"
+                          else "Freed ${result.count} episode${if (result.count == 1) "" else "s"} " +
+                              "(${formatBytesShort(result.bytes)})",
+            )
+            load()
+        }
+    }
+
+    fun toggleModelSelected(name: String) {
+        val current = _state.value.selectedModels
+        _state.value = _state.value.copy(
+            selectedModels = if (name in current) current - name else current + name,
+        )
+    }
+
+    /** Deletes every selected model's cache directory on the worker, one at a
+     *  time so a rejection (the active model) does not abort the rest. */
+    fun deleteSelectedModels() {
+        val names = _state.value.selectedModels.toList()
+        if (names.isEmpty()) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(modelsBusy = true)
+            var freed = 0
+            var failed = 0
+            for (name in names) {
+                runCatching { repo.api.deleteModel(name) }
+                    .onSuccess { freed++ }
+                    .onFailure { failed++ }
+            }
+            _state.value = _state.value.copy(
+                modelsBusy = false,
+                selectedModels = emptySet(),
+                message = when {
+                    failed == 0 -> "Deleted $freed model${if (freed == 1) "" else "s"}"
+                    freed == 0 -> "Could not delete the selected model${if (failed == 1) "" else "s"}"
+                    else -> "Deleted $freed, $failed could not be removed"
+                },
+            )
+            runCatching { repo.api.models() }.onSuccess {
+                _state.value = _state.value.copy(downloadedModels = it)
+            }
             load()
         }
     }
@@ -261,7 +354,9 @@ fun SystemScreen(visible: Boolean = true) {
     val vm: SystemViewModel = viewModel()
     val state by vm.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
-    var cleanupDialog by remember { mutableStateOf(false) }
+    var cleanupOldDialog by remember { mutableStateOf(false) }
+    var cleanupFinishedDialog by remember { mutableStateOf(false) }
+    var deleteModelsDialog by remember { mutableStateOf(false) }
     val barBehavior = rememberTabBarBehavior()
 
     // Finished counts and container figures both go stale the moment you leave
@@ -379,25 +474,97 @@ fun SystemScreen(visible: Boolean = true) {
                             emphasise = true,
                         )
                         StatRow("Free on disk", formatBytesShort(sys.storage.diskFree))
+                    }
 
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedButton(
-                            onClick = { cleanupDialog = true },
-                            enabled = !state.busy,
-                            modifier = Modifier.fillMaxWidth(),
+                    SectionCard("Free up space") {
+                        CleanupOptionRow(
+                            title = "Old episodes",
+                            description = describeCleanupPreview(state.oldPreview),
+                            busy = state.busy,
+                            enabled = (state.oldPreview?.count ?: 0) > 0,
+                            onFreeUp = { cleanupOldDialog = true },
                         ) {
-                            Icon(Icons.Default.DeleteSweep, null, Modifier.size(17.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Free up space from old episodes")
+                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                listOf(7, 14, 30, 90).forEachIndexed { i, d ->
+                                    SegmentedButton(
+                                        selected = state.oldDays == d,
+                                        onClick = { vm.setOldDays(d) },
+                                        shape = SegmentedButtonDefaults.itemShape(i, 4),
+                                    ) { Text("${d}d") }
+                                }
+                            }
                         }
+                        HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                        CleanupOptionRow(
+                            title = "Finished episodes",
+                            description = describeCleanupPreview(state.finishedPreview),
+                            busy = state.busy,
+                            enabled = (state.finishedPreview?.count ?: 0) > 0,
+                            onFreeUp = { cleanupFinishedDialog = true },
+                        )
                         Text(
                             "Removes audio and transcripts from the server. Episodes stay in " +
-                                "the library and can be fetched again. Anything you have started " +
-                                "is skipped.",
+                                "the library and can be fetched again. \"Old episodes\" skips " +
+                                "anything you've started listening to.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp),
+                            modifier = Modifier.padding(top = 10.dp),
                         )
+
+                        HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                        Text(
+                            "Whisper models",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        if (state.downloadedModels.isEmpty()) {
+                            Text(
+                                "No models downloaded on the server yet.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            state.downloadedModels.forEachIndexed { i, m ->
+                                ModelStorageRow(
+                                    model = m,
+                                    selected = m.name in state.selectedModels,
+                                    onToggle = { vm.toggleModelSelected(m.name) },
+                                )
+                                if (i < state.downloadedModels.lastIndex) {
+                                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                                }
+                            }
+                            if (state.selectedModels.isNotEmpty()) {
+                                Spacer(Modifier.height(10.dp))
+                                val selectedBytes = state.downloadedModels
+                                    .filter { it.name in state.selectedModels }.sumOf { it.bytes }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "${state.selectedModels.size} selected · " +
+                                            formatBytesShort(selectedBytes),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    OutlinedButton(
+                                        onClick = { deleteModelsDialog = true },
+                                        enabled = !state.modelsBusy,
+                                    ) {
+                                        Icon(Icons.Default.Delete, null, Modifier.size(16.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Delete")
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                "The active transcription model can't be deleted here — change " +
+                                    "it above first. A deleted model re-downloads automatically " +
+                                    "the next time it's used.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
 
@@ -451,45 +618,124 @@ fun SystemScreen(visible: Boolean = true) {
         }
     }
 
-    if (cleanupDialog) {
-        CleanupDialog(
-            onDismiss = { cleanupDialog = false },
-            onConfirm = { days -> cleanupDialog = false; vm.cleanup(days) },
+    if (cleanupOldDialog) {
+        ConfirmDialog(
+            title = "Free up old episodes?",
+            message = "Removes audio and transcripts for ${describeCleanupPreview(state.oldPreview)} " +
+                "older than ${state.oldDays} days. Episodes you have started are never removed, " +
+                "and anything removed can be fetched again later.",
+            confirmLabel = "Free up",
+            onDismiss = { cleanupOldDialog = false },
+            onConfirm = { cleanupOldDialog = false; vm.cleanupOld() },
+        )
+    }
+    if (cleanupFinishedDialog) {
+        ConfirmDialog(
+            title = "Free up finished episodes?",
+            message = "Removes audio and transcripts for ${describeCleanupPreview(state.finishedPreview)} " +
+                "you've listened to the end. Anything removed can be fetched again later.",
+            confirmLabel = "Free up",
+            onDismiss = { cleanupFinishedDialog = false },
+            onConfirm = { cleanupFinishedDialog = false; vm.cleanupFinished() },
+        )
+    }
+    if (deleteModelsDialog) {
+        val n = state.selectedModels.size
+        ConfirmDialog(
+            title = "Delete $n model${if (n == 1) "" else "s"}?",
+            message = "Frees disk space now. A deleted model downloads again automatically " +
+                "the next time it's used to transcribe.",
+            confirmLabel = "Delete",
+            onDismiss = { deleteModelsDialog = false },
+            onConfirm = { deleteModelsDialog = false; vm.deleteSelectedModels() },
         )
     }
 }
 
 @Composable
-private fun CleanupDialog(onDismiss: () -> Unit, onConfirm: (Int) -> Unit) {
-    var days by remember { mutableIntStateOf(30) }
+private fun ConfirmDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Free up space") },
-        text = {
-            Column {
-                Text("Remove audio and transcripts for episodes older than:")
-                Spacer(Modifier.height(14.dp))
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    listOf(7, 14, 30, 90).forEachIndexed { i, d ->
-                        SegmentedButton(
-                            selected = days == d,
-                            onClick = { days = d },
-                            shape = SegmentedButtonDefaults.itemShape(i, 4),
-                        ) { Text("${d}d") }
-                    }
-                }
-                Spacer(Modifier.height(14.dp))
+        title = { Text(title) },
+        text = { Text(message, style = MaterialTheme.typography.bodyMedium) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(confirmLabel) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** A cleanup option's live count and size, or a placeholder while it loads. */
+private fun describeCleanupPreview(preview: CleanupPreview?): String = when {
+    preview == null -> "checking…"
+    preview.count == 0 -> "nothing to free"
+    else -> "${preview.count} episode${if (preview.count == 1) "" else "s"} · " +
+        formatBytesShort(preview.bytes)
+}
+
+/** One cleanup option: what it would do, and the button that does it. [extra]
+ *  holds option-specific controls, such as the day-threshold chips. */
+@Composable
+private fun CleanupOptionRow(
+    title: String,
+    description: String,
+    busy: Boolean,
+    enabled: Boolean,
+    onFreeUp: () -> Unit,
+    extra: (@Composable () -> Unit)? = null,
+) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 Text(
-                    "Episodes you have started are never removed, and anything removed " +
-                        "can be fetched again later.",
-                    style = MaterialTheme.typography.bodySmall,
+                    description,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        },
-        confirmButton = { TextButton(onClick = { onConfirm(days) }) { Text("Free up") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
+            Spacer(Modifier.width(12.dp))
+            OutlinedButton(onClick = onFreeUp, enabled = !busy && enabled) { Text("Free up") }
+        }
+        extra?.let {
+            Spacer(Modifier.height(10.dp))
+            it()
+        }
+    }
+}
+
+/** One downloaded model: its size, a checkbox, and an "active" badge in place
+ *  of the checkbox when it is the one currently configured for transcription. */
+@Composable
+private fun ModelStorageRow(
+    model: ModelStorageEntry,
+    selected: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !model.active, onClick = onToggle)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = selected, onCheckedChange = { onToggle() }, enabled = !model.active)
+        Column(Modifier.weight(1f).padding(start = 4.dp)) {
+            Text(model.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            Text(
+                formatBytesShort(model.bytes),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (model.active) {
+            AssistChip(onClick = {}, enabled = false, label = { Text("Active") })
+        }
+    }
 }
 
 @Composable

@@ -114,6 +114,18 @@ a chosen id against the worker's `/validate` before storing it.
   battery in ten hours.
 - Range requests on the audio endpoint are mandatory: use `http.ServeFile`.
 - SALDO multiword lemmas are filtered at import; they balloon `forms`.
+- **The active transcription model can't be deleted from the System screen.**
+  `models_admin.go` checks the requested name against `ingest.TranscriptionModel`
+  before proxying a delete to the worker's `DELETE /models/{name}`, or the
+  pipeline would silently re-download it mid-run. Deleting any other cached
+  model is fine even while it sits loaded in the worker's memory — the weights
+  are already resident in RSS; deleting the file just means the next load
+  re-downloads it.
+- **Cleanup has two independent scopes, not one threshold.** "old" (unstarted,
+  past a day count) and "finished" (listened to the end, any age) are both
+  computed by `cleanupCandidates` in `system.go` and previewed via
+  `GET /api/admin/cleanup/preview?scope=` before the app lets you commit, so
+  the count and bytes shown always match what a following POST would do.
 - **Volume above 100% is a gain effect bound to the audio session**, not the
   controller's own volume (which only attenuates). It does not survive a new
   load, so `PlaybackHolder.prepare` re-sends the volume and the service

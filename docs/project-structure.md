@@ -39,7 +39,9 @@ internal/
     listening.go             Listening-time stats.
     schedules.go             Ingest schedule CRUD (schedules table).
     model.go                 Transcription model selection/validation.
-    system.go                System stats, archive/cleanup, disk usage.
+    system.go                System stats, archive/cleanup (scoped: old/finished,
+                             with a /preview for live count+bytes), disk usage.
+    models_admin.go          Whisper model list/delete, proxied to the worker.
     status.go                Pipeline/queue status.
     download.go appupdate.go dockerstats.go diskfree_unix.go icon.go admin.go
   ingest/                    Pipeline stages over items.status state machine.
@@ -54,7 +56,9 @@ internal/
 ## worker/ (Python)
 
 ```
-app.py            Flask-ish service: /transcribe, /validate, /storage. Model id per call.
+app.py            Flask-ish service: /transcribe, /validate, /storage,
+                   /models (list downloaded, with size) and DELETE /models/{name}.
+                   Model id per call.
 requirements.txt  faster-whisper, etc.
 Dockerfile
 ```

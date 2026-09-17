@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -382,32 +383,105 @@ func (s *Server) restoreItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "status": "new"})
 }
 
-// cleanup archives everything older than ?days=, skipping anything currently
-// in progress so a half-listened episode is never pulled out from under you.
-func (s *Server) cleanup(w http.ResponseWriter, r *http.Request) {
-	days := queryInt(r, "days", 30)
-	if days < 1 {
-		badRequest(w, "days must be at least 1")
-		return
+// cleanupCandidates finds the items one cleanup scope would archive, and how
+// many bytes doing so would free. "old" skips anything started, so a
+// half-listened episode is never pulled out from under you; "finished" has no
+// such guard because being finished is itself the safety condition.
+func (s *Server) cleanupCandidates(ctx context.Context, scope string, days int) (ids []int, freedBytes int64, err error) {
+	var query string
+	args := []any{}
+	switch scope {
+	case "old":
+		if days < 1 {
+			return nil, 0, errors.New("days must be at least 1")
+		}
+		query = `
+			SELECT i.id, i.audio_bytes, i.audio_path FROM items i
+			LEFT JOIN progress p ON p.item_id = i.id
+			WHERE i.status = 'ready'
+			  AND i.published_at < datetime('now', '-' || ? || ' days')
+			  AND COALESCE(p.position_ms, 0) = 0`
+		args = append(args, days)
+	case "finished":
+		query = `
+			SELECT i.id, i.audio_bytes, i.audio_path FROM items i
+			JOIN progress p ON p.item_id = i.id
+			WHERE i.status = 'ready' AND p.completed = 1`
+	default:
+		return nil, 0, fmt.Errorf("unknown scope %q", scope)
 	}
-	rows, err := s.pool.QueryContext(r.Context(), `
-		SELECT i.id FROM items i
-		LEFT JOIN progress p ON p.item_id = i.id
-		WHERE i.status = 'ready'
-		  AND i.published_at < datetime('now', '-' || ? || ' days')
-		  AND COALESCE(p.position_ms, 0) = 0`, days)
+
+	rows, err := s.pool.QueryContext(ctx, query, args...)
 	if err != nil {
-		serverError(w, err)
-		return
+		return nil, 0, err
 	}
-	var ids []int
+	defer rows.Close()
 	for rows.Next() {
 		var id int
-		if rows.Scan(&id) == nil {
-			ids = append(ids, id)
+		var audioBytes sql.NullInt64
+		var audioPath sql.NullString
+		if err := rows.Scan(&id, &audioBytes, &audioPath); err != nil {
+			return nil, 0, err
+		}
+		ids = append(ids, id)
+		switch {
+		case audioBytes.Valid:
+			freedBytes += audioBytes.Int64
+		case audioPath.Valid && audioPath.String != "":
+			// Older items were never backfilled with audio_bytes; the file
+			// itself is the only remaining source of truth for their size.
+			if fi, statErr := os.Stat(audioPath.String); statErr == nil {
+				freedBytes += fi.Size()
+			}
 		}
 	}
-	rows.Close()
+	return ids, freedBytes, rows.Err()
+}
+
+// cleanupPreview answers "how much would this free" before the user commits
+// to it, for either scope.
+func (s *Server) cleanupPreview(w http.ResponseWriter, r *http.Request) {
+	scope := r.URL.Query().Get("scope")
+	if scope == "" {
+		scope = "old"
+	}
+	days := queryInt(r, "days", 30)
+	ids, freedBytes, err := s.cleanupCandidates(r.Context(), scope, days)
+	if err != nil {
+		badRequest(w, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"scope": scope, "count": len(ids), "bytes": freedBytes,
+	})
+}
+
+// cleanup archives every item a scope selects: "old" is everything ready and
+// unstarted past a day threshold, "finished" is everything listened to the
+// end, regardless of age.
+func (s *Server) cleanup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Scope string `json:"scope"`
+		Days  int    `json:"days"`
+	}
+	decodeJSON(r, &body) // absent or empty body falls back to query params
+	scope := body.Scope
+	if scope == "" {
+		scope = r.URL.Query().Get("scope")
+	}
+	if scope == "" {
+		scope = "old"
+	}
+	days := body.Days
+	if days == 0 {
+		days = queryInt(r, "days", 30)
+	}
+
+	ids, freedBytes, err := s.cleanupCandidates(r.Context(), scope, days)
+	if err != nil {
+		badRequest(w, err.Error())
+		return
+	}
 
 	archived := 0
 	for _, id := range ids {
@@ -415,5 +489,7 @@ func (s *Server) cleanup(w http.ResponseWriter, r *http.Request) {
 			archived++
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"archived": archived, "days": days})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"archived": archived, "bytes": freedBytes, "scope": scope, "days": days,
+	})
 }
