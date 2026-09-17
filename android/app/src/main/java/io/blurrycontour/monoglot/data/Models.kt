@@ -314,3 +314,24 @@ data class ModelSettings(
     val default: String = "",
     val suggested: List<ModelOption> = emptyList(),
 )
+
+/** How many episodes a cleanup scope would touch, and how much disk it would
+ *  free, fetched before the user commits to it. */
+@Serializable
+data class CleanupPreview(
+    val scope: String = "",
+    val count: Int = 0,
+    val bytes: Long = 0,
+)
+
+/** One Whisper model downloaded into the worker's cache. */
+@Serializable
+data class ModelStorageEntry(
+    val name: String = "",
+    val bytes: Long = 0,
+    val active: Boolean = false,
+)
+
+@Serializable
+data class ModelStorageResponse(val models: List<ModelStorageEntry> = emptyList())
+

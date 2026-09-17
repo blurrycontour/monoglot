@@ -199,9 +199,30 @@ class ApiClient(private val settings: SettingsStore) {
 
     suspend fun restoreItem(itemId: Int) { post("/api/items/$itemId/restore", "{}") }
 
-    suspend fun cleanup(days: Int): Int {
-        val body = post("/api/admin/cleanup?days=$days", "{}")
-        return Regex("\"archived\":(\\d+)").find(body)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+    /** Count and size a cleanup scope would free, without touching anything.
+     *  [scope] is "old" (needs [days]) or "finished". */
+    suspend fun cleanupPreview(scope: String, days: Int = 30): CleanupPreview =
+        json.decodeFromString(get("/api/admin/cleanup/preview?scope=$scope&days=$days"))
+
+    /** Archives every item [scope] selects and returns the bytes actually
+     *  freed. "old" is unstarted episodes past [days]; "finished" is every
+     *  episode listened to the end, regardless of age. */
+    suspend fun cleanup(scope: String, days: Int = 30): CleanupPreview {
+        val body = post("/api/admin/cleanup", """{"scope":"$scope","days":$days}""")
+        val archived = Regex("\"archived\":(\\d+)").find(body)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val bytes = Regex("\"bytes\":(\\d+)").find(body)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+        return CleanupPreview(scope = scope, count = archived, bytes = bytes)
+    }
+
+    /** Every Whisper model downloaded into the worker's cache, largest use
+     *  case for the System screen being deciding which ones to drop. */
+    suspend fun models(): List<ModelStorageEntry> =
+        json.decodeFromString<ModelStorageResponse>(get("/api/admin/models")).models
+
+    /** Deletes one model's cache directory on the worker. Throws with the
+     *  server's reason if it is the active transcription model. */
+    suspend fun deleteModel(name: String) {
+        delete("/api/admin/models/${java.net.URLEncoder.encode(name, "UTF-8")}")
     }
 
     /** [source] scopes the counts to one source, matching the chip in use. */
